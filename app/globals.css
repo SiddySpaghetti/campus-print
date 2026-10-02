@@ -1,26 +1,117 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
 
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * CampusPrint visual system — "paper & ink, with a highlighter".
+ * Brand tokens are the source of truth; shadcn's semantic tokens map onto them.
+ * Note: shadcn's `muted` is a *surface* colour, so the brand text-grey (--muted)
+ * is exposed as `text-muted-foreground`, and `bg-muted` is a slightly deeper paper.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --paper: #fafaf7;
+  --ink: #111111;
+  --muted: #6b6b66;
+  --line: #e7e5df;
+  --accent: #d7f75b;
+
+  --paper-deep: #f2f1ec;
+  --signal-printing: #b45309;
+  --signal-ready: #15803d;
+
+  --radius: 0.75rem;
+
+  /* shadcn semantic tokens */
+  --background: var(--paper);
+  --foreground: var(--ink);
+  --card: #ffffff;
+  --card-foreground: var(--ink);
+  --popover: #ffffff;
+  --popover-foreground: var(--ink);
+  --primary: var(--ink);
+  --primary-foreground: var(--paper);
+  --secondary: var(--paper-deep);
+  --secondary-foreground: var(--ink);
+  --muted-foreground: var(--muted);
+  --accent-foreground: var(--ink);
+  --destructive: #b42318;
+  --border: var(--line);
+  --input: var(--line);
+  --ring: var(--ink);
 }
 
 @theme inline {
+  --color-paper: var(--paper);
+  --color-paper-deep: var(--paper-deep);
+  --color-ink: var(--ink);
+  --color-line: var(--line);
+  --color-signal-printing: var(--signal-printing);
+  --color-signal-ready: var(--signal-ready);
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--paper-deep);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --font-display: var(--font-bricolage);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+  --radius-card: 20px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-background text-foreground font-sans;
+  }
+  ::selection {
+    background: var(--accent);
+    color: var(--ink);
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  /* SSR-safe fallback: entrance animations render in their final state.
+     `data-motion-static` covers a whole subtree (e.g. split-text headlines);
+     `data-motion-static-self` covers only the element itself. */
+  [data-motion-static],
+  [data-motion-static] *,
+  [data-motion-static-self] {
+    opacity: 1 !important;
+    filter: none !important;
+    transform: none !important;
+  }
 }
