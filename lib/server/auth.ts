@@ -72,26 +72,35 @@ export const ROLE_HOME: Record<AppRole, string> = {
 };
 
 /**
- * For Server Component PAGES. Signed-out visitors go to /login; signed-in
- * users with another role go to their own home, since every API of this area
- * would refuse them anyway. Pages must call this themselves: a layout's check
- * is not enough, because layouts and pages render in parallel. `cache` makes
- * the layout + page share one lookup per request.
+ * The signed-in user and their profile, without redirecting. `cache` makes the
+ * layout + page share one lookup per request.
  */
-export const requireRolePage = cache(async (role: AppRole, next: string) => {
+export const getPageSession = cache(async () => {
   const supabase = await createClient();
   const { data } = await supabase.auth.getUser();
-  if (!data.user) redirect(`/login?next=${encodeURIComponent(next)}`);
+  if (!data.user) return { supabase, user: null, profile: null };
 
   const { data: profile } = await supabase
     .from("profiles")
     .select("role, shop_id, deleted_at")
     .eq("id", data.user.id)
     .maybeSingle();
+  return { supabase, user: data.user, profile };
+});
+
+/**
+ * For Server Component PAGES. Signed-out visitors go to /login; signed-in
+ * users with another role go to their own home, since every API of this area
+ * would refuse them anyway. Pages must call this themselves: a layout's check
+ * is not enough, because layouts and pages render in parallel.
+ */
+export async function requireRolePage(role: AppRole, next: string) {
+  const { supabase, user, profile } = await getPageSession();
+  if (!user) redirect(`/login?next=${encodeURIComponent(next)}`);
   if (!profile || profile.deleted_at) redirect("/");
   if (profile.role !== role) redirect(ROLE_HOME[profile.role as AppRole] ?? "/");
 
-  return { supabase, user: data.user, shopId: profile.shop_id as string | null };
-});
+  return { supabase, user, shopId: profile.shop_id as string | null };
+}
 
 export const requireStudentPage = (next: string) => requireRolePage("student", next);

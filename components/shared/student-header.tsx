@@ -3,7 +3,7 @@ import { Bell } from "lucide-react";
 
 import { Logo } from "@/components/shared/logo";
 import { Container } from "@/components/shared/section";
-import { requireStudentPage } from "@/lib/server/auth";
+import { getPageSession, requireStudentPage } from "@/lib/server/auth";
 
 const navLink =
   "rounded-full px-2.5 py-1.5 font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground transition-colors hover:bg-paper-deep hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
@@ -12,9 +12,16 @@ const navLink =
  * Header for every signed-in student page: home, My orders, notifications
  * (with the unread count, read through RLS so only the student's own) and
  * sign out. `children` renders under it (the print flow's step rail).
+ *
+ * With `next` it also guards the page (signed out → /login?next=…). Without
+ * it, it renders nothing for non-students and the page must guard itself:
+ * a layout can't see the URL, so a fixed `next` would send a student who
+ * signed in from /notifications to the wrong page.
  */
-export async function StudentHeader({ next, children }: { next: string; children?: React.ReactNode }) {
-  const { supabase, user } = await requireStudentPage(next);
+export async function StudentHeader({ next, children }: { next?: string; children?: React.ReactNode }) {
+  if (next) await requireStudentPage(next);
+  const { supabase, user, profile } = await getPageSession();
+  if (!user || !profile || profile.deleted_at || profile.role !== "student") return null;
   const { count } = await supabase
     .from("notifications")
     .select("id", { count: "exact", head: true })

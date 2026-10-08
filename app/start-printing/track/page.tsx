@@ -49,7 +49,10 @@ const ORDER_COLUMNS =
  */
 export default async function TrackPage({ searchParams }: PageProps<"/start-printing/track">) {
   const { order: orderParam } = await searchParams;
-  const { supabase } = await requireStudentPage("/start-printing/track");
+  // Only a validated id goes into `next`; /login still runs it through safeNextPath.
+  const { supabase } = await requireStudentPage(
+    isUuid(orderParam) ? `/start-printing/track?order=${orderParam}` : "/start-printing/track",
+  );
 
   let query = supabase.from("orders").select(ORDER_COLUMNS);
   query = isUuid(orderParam)

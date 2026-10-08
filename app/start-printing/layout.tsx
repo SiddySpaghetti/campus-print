@@ -7,7 +7,8 @@ import { StudentHeader } from "@/components/shared/student-header";
  * (see flow-state.tsx), so it survives navigation between these steps while
  * the header and step rail stay put.
  *
- * StudentHeader sends signed-out visitors to /login and non-students home.
+ * Each page guards itself (or via (steps)/layout.tsx) so that /login returns
+ * to the exact URL, e.g. /start-printing/track?order=…; a layout can't see it.
  * This is a convenience, not the security boundary: every API route re-checks
  * the user and role itself.
  */
@@ -15,7 +16,7 @@ export default function StartPrintingLayout({ children }: LayoutProps<"/start-pr
   return (
     <div className="relative isolate flex min-h-dvh flex-col">
       <PaperBackdrop />
-      <StudentHeader next="/start-printing">
+      <StudentHeader>
         <FlowSteps />
       </StudentHeader>
       <main id="main" className="flex-1">
