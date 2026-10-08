@@ -49,7 +49,7 @@ export function Navbar() {
                 <li key={item.href}>
                   <Link
                     href={item.href}
-                    className="rounded-full px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-paper-deep hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="rounded-full px-3 py-2 text-sm font-medium text-muted-foreground lg:px-4 transition-colors hover:bg-paper-deep hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     {item.label}
                   </Link>
@@ -59,6 +59,9 @@ export function Navbar() {
           </nav>
 
           <div className="flex items-center gap-1">
+            <Button asChild variant="ghost" size="sm" className="hidden sm:inline-flex md:h-10 lg:px-5">
+              <Link href="/login">Sign in</Link>
+            </Button>
             <Button asChild size="sm" className="hidden sm:inline-flex md:h-10 md:px-5">
               <Link href={siteConfig.cta.primary.href}>
                 {siteConfig.cta.primary.label}
@@ -105,7 +108,12 @@ export function Navbar() {
                   </li>
                 ))}
               </ul>
-              <div className="border-t border-line p-3">
+              <div className="flex flex-col gap-2 border-t border-line p-3">
+                <Button asChild variant="outline" size="lg" className="w-full">
+                  <Link href="/login" onClick={close}>
+                    Sign in
+                  </Link>
+                </Button>
                 <Button asChild size="lg" className="w-full">
                   <Link href={siteConfig.cta.primary.href} onClick={close}>
                     {siteConfig.cta.primary.label}
