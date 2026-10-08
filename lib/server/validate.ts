@@ -143,6 +143,37 @@ export function parseUploadRequest(body: unknown): UploadRequest {
 }
 
 /**
+ * Shop status moves: target -> the statuses it may be reached from. Mirrors
+ * orders_guard + orders_lifecycle (which stay the real authority); the route
+ * also uses it as a compare-and-set so a double click can't fire twice.
+ */
+export const SHOP_TRANSITIONS = {
+  ACCEPTED: ["PENDING"],
+  PRINTING: ["ACCEPTED"],
+  READY: ["PRINTING"],
+  COMPLETED: ["READY"],
+  REJECTED: ["PENDING"],
+  CANCELLED: ["ACCEPTED", "PRINTING"],
+} as const;
+export type ShopTargetStatus = keyof typeof SHOP_TRANSITIONS;
+export const MAX_REASON_LENGTH = 200;
+
+export function parseStatusChange(body: unknown): { status: ShopTargetStatus; reason: string | null } {
+  const b = asObject(body);
+  exactKeys(b, ["status", "reason"]);
+  const status = oneOf(b.status, Object.keys(SHOP_TRANSITIONS) as ShopTargetStatus[]);
+  const needsReason = status === "REJECTED" || status === "CANCELLED";
+  const reason = typeof b.reason === "string" ? b.reason.replace(/[\u0000-\u001f\u007f]/g, " ").trim() : "";
+  if (needsReason && (!reason || reason.length > MAX_REASON_LENGTH)) {
+    throw new ValidationError("a reason is required");
+  }
+  if (!needsReason && b.reason !== undefined && b.reason !== null) {
+    throw new ValidationError("unexpected reason");
+  }
+  return { status, reason: needsReason ? reason : null };
+}
+
+/**
  * Post-login redirect target. Same-origin relative paths only, so a crafted
  * `?next=` can't bounce a freshly signed-in user to another site.
  */

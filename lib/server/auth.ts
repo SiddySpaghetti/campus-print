@@ -64,24 +64,34 @@ export async function requireRole(...allowed: AppRole[]): Promise<AuthContext> {
 
 export const requireAdmin = () => requireRole("admin");
 
+/** Where each role lands after signing in (or on a page meant for another role). */
+export const ROLE_HOME: Record<AppRole, string> = {
+  student: "/start-printing",
+  shopkeeper: "/shop",
+  admin: "/admin",
+};
+
 /**
- * For Server Component PAGES of the student app. Signed-out visitors go to
- * /login; signed-in non-students (shop staff, admins) go home, since every
- * student API would refuse them anyway. Pages must call this themselves: a
- * layout's check is not enough, because layouts and pages render in parallel.
- * `cache` makes the layout + page share one lookup per request.
+ * For Server Component PAGES. Signed-out visitors go to /login; signed-in
+ * users with another role go to their own home, since every API of this area
+ * would refuse them anyway. Pages must call this themselves: a layout's check
+ * is not enough, because layouts and pages render in parallel. `cache` makes
+ * the layout + page share one lookup per request.
  */
-export const requireStudentPage = cache(async (next: string) => {
+export const requireRolePage = cache(async (role: AppRole, next: string) => {
   const supabase = await createClient();
   const { data } = await supabase.auth.getUser();
   if (!data.user) redirect(`/login?next=${encodeURIComponent(next)}`);
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role, deleted_at")
+    .select("role, shop_id, deleted_at")
     .eq("id", data.user.id)
     .maybeSingle();
-  if (!profile || profile.deleted_at || profile.role !== "student") redirect("/");
+  if (!profile || profile.deleted_at) redirect("/");
+  if (profile.role !== role) redirect(ROLE_HOME[profile.role as AppRole] ?? "/");
 
-  return { supabase, user: data.user };
+  return { supabase, user: data.user, shopId: profile.shop_id as string | null };
 });
+
+export const requireStudentPage = (next: string) => requireRolePage("student", next);

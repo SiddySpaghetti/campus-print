@@ -5,7 +5,7 @@ import { OrderTracker, type OrderStatus } from "@/components/flow/order-tracker"
 import { Container } from "@/components/shared/section";
 import { SectionHeading } from "@/components/shared/section-heading";
 import { Button } from "@/components/ui/button";
-import { canStudentCancel, FINAL_STATUSES, formatOrderDate, orderLabel, paymentLabels } from "@/lib/orders";
+import { canStudentCancel, FINAL_STATUSES, formatOrderDate, orderLabel, paymentLabel } from "@/lib/orders";
 import { formatPageCount, formatSheetCount } from "@/lib/page-count";
 import {
   colourLabels,
@@ -26,6 +26,7 @@ type OrderRow = {
   status: OrderStatus;
   status_reason: string | null;
   payment_status: string;
+  payment_method: string;
   colour_mode: ColourMode;
   paper_size: PaperSize;
   sides: SideMode;
@@ -38,7 +39,7 @@ type OrderRow = {
 };
 
 const ORDER_COLUMNS =
-  "id, order_number, shop_id, status, status_reason, payment_status, colour_mode, paper_size, sides, copies, total_pages, sheets, total_paise, created_at, order_files(original_name)";
+  "id, order_number, shop_id, status, status_reason, payment_status, payment_method, colour_mode, paper_size, sides, copies, total_pages, sheets, total_paise, created_at, order_files(original_name)";
 
 /**
  * Tracking for one of the signed-in student's orders: `?order=<id>`, or their
@@ -75,7 +76,8 @@ export default async function TrackPage({ searchParams }: PageProps<"/start-prin
 
   const label = orderLabel(order);
   const final = FINAL_STATUSES.includes(order.status);
-  const unpaid = order.status === "PENDING" && ["PENDING", "FAILED"].includes(order.payment_status);
+  const unpaid = ["PENDING", "FAILED"].includes(order.payment_status);
+  const atCounter = order.payment_method === "PAY_AT_COUNTER";
 
   return (
     <Container className="pb-16 pt-8 md:pb-24 md:pt-12">
@@ -87,10 +89,10 @@ export default async function TrackPage({ searchParams }: PageProps<"/start-prin
         description={shop ? `At ${shop.name} · usually ready in ~${shop.prep_minutes} min` : undefined}
       />
 
-      {unpaid ? (
+      {unpaid && atCounter && !final ? (
         <p className="mt-6 rounded-card border border-line bg-paper-deep p-4 text-[13px] text-muted-foreground">
-          Development mode: this order is <span className="font-medium text-ink">unpaid</span>.
-          Online payment isn&apos;t live yet, so the shop won&apos;t see it until it is.
+          Pay <span className="font-medium text-ink">{formatRupees(order.total_paise / 100)}</span> at the
+          counter when you collect. Show order <span className="font-medium text-ink">#{label}</span>.
         </p>
       ) : null}
 
@@ -107,11 +109,11 @@ export default async function TrackPage({ searchParams }: PageProps<"/start-prin
             <Detail label="Copies" value={`${order.copies} ${order.copies === 1 ? "copy" : "copies"}`} />
             <Detail label="Sheets" value={formatSheetCount(order.sheets)} />
             <Detail label="Placed" value={formatOrderDate(order.created_at)} />
-            <Detail label="Payment" value={paymentLabels[order.payment_status] ?? order.payment_status} />
+            <Detail label="Payment" value={paymentLabel(order)} />
           </dl>
 
           <div className="flex items-baseline justify-between gap-3 border-t border-line pt-4">
-            <span className="text-sm text-muted-foreground">{unpaid ? "Total (unpaid)" : "Total"}</span>
+            <span className="text-sm text-muted-foreground">{unpaid && !final ? (atCounter ? "Total (pay at counter)" : "Total (unpaid)") : "Total"}</span>
             <span className="font-mono text-2xl font-semibold tracking-[-0.03em] text-ink">
               {formatRupees(order.total_paise / 100)}
             </span>

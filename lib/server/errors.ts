@@ -26,7 +26,9 @@ export const SAFE = {
   rateLimited: { status: 429, code: "rate_limited", message: "Too many requests. Please wait a moment and try again." },
   createFailed: { status: 500, code: "create_failed", message: "Unable to create order." },
   cancelFailed: { status: 409, code: "cancel_failed", message: "Order could not be cancelled." },
-  payFailed: { status: 502, code: "payment_unavailable", message: "Payment couldn't be started. Please try again." },
+  statusFailed: { status: 409, code: "status_failed", message: "This order can't be moved to that status. Refresh and try again." },
+  notFound: { status: 404, code: "not_found", message: "Not found." },
+  payFailed:{ status: 502, code: "payment_unavailable", message: "Payment couldn't be started. Please try again." },
   notConfigured: { status: 503, code: "unavailable", message: "This feature isn't available right now." },
   internal: { status: 500, code: "internal", message: "Something went wrong." },
 } as const satisfies Record<string, SafeError>;

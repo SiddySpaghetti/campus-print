@@ -6,7 +6,7 @@ import { Reveal } from "@/components/shared/reveal";
 import { Container } from "@/components/shared/section";
 import { SectionHeading } from "@/components/shared/section-heading";
 import { Button } from "@/components/ui/button";
-import { FINAL_STATUSES, formatOrderDate, orderLabel, paymentLabels, statusLabels } from "@/lib/orders";
+import { FINAL_STATUSES, formatOrderDate, orderLabel, paymentLabel, statusLabels } from "@/lib/orders";
 import { formatPageCount } from "@/lib/page-count";
 import { colourLabels, formatRupees, paperLabels, sidesLabels, type ColourMode, type PaperSize, type SideMode } from "@/lib/pricing";
 import { requireStudentPage } from "@/lib/server/auth";
@@ -18,6 +18,7 @@ type OrderRow = {
   shop_id: string;
   status: OrderStatus;
   payment_status: string;
+  payment_method: string;
   colour_mode: ColourMode;
   paper_size: PaperSize;
   sides: SideMode;
@@ -36,7 +37,7 @@ export default async function MyOrdersPage() {
 
   const { data } = await supabase
     .from("orders")
-    .select("id, order_number, shop_id, status, payment_status, colour_mode, paper_size, sides, copies, total_pages, total_paise, created_at")
+    .select("id, order_number, shop_id, status, payment_status, payment_method, colour_mode, paper_size, sides, copies, total_pages, total_paise, created_at")
     .order("created_at", { ascending: false })
     .limit(50)
     .returns<OrderRow[]>();
@@ -75,7 +76,7 @@ export default async function MyOrdersPage() {
                       </span>
                       <StatusPill status={order.status} />
                       <span className="rounded-full border border-line px-2.5 py-0.5 text-[12px] text-muted-foreground">
-                        {paymentLabels[order.payment_status] ?? order.payment_status}
+                        {paymentLabel(order)}
                       </span>
                     </div>
                     <p className="mt-1.5 text-[13px] text-muted-foreground">

@@ -36,11 +36,11 @@ export function POST(_request: Request, ctx: RouteContext<"/api/orders/[id]/paym
     // Read through RLS as the user: only their own order can come back.
     const { data: order, error } = await supabase
       .from("orders")
-      .select("id, status, payment_status, total_paise, payment_order_id")
+      .select("id, status, payment_method, payment_status, total_paise, payment_order_id")
       .eq("id", orderId)
       .maybeSingle();
     if (error || !order) return errorResponse(SAFE.payFailed);
-    if (order.status !== "PENDING" || !["PENDING", "FAILED"].includes(order.payment_status)) {
+    if (order.payment_method !== "ONLINE" || order.status !== "PENDING" || !["PENDING", "FAILED"].includes(order.payment_status)) {
       return errorResponse(SAFE.payFailed);
     }
 

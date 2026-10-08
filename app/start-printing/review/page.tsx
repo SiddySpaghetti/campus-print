@@ -26,8 +26,8 @@ export default function ReviewPage() {
     return () => clearTimeout(timer);
   }, []);
 
-  // DEV ONLY: the order is created UNPAID (status PENDING, payment PENDING).
-  // No payment is taken; Razorpay checkout replaces this step later.
+  // The order is created as PAY_AT_COUNTER: it stays unpaid and the student
+  // pays the shop in person at pickup. Online payment replaces this later.
   const placeOrder = async () => {
     if (!shop || !file || placing) return;
     setPlacing(true);
@@ -61,10 +61,10 @@ export default function ReviewPage() {
       entrance="assemble"
       back={{ href: "/start-printing/options" }}
       next={{
-        label: placing ? "Placing order…" : "Place order",
+        label: placing ? "Placing order…" : "Place order · pay at counter",
         onClick: placeOrder,
         disabled: !assembled || placing || !price,
-        hint: "Development mode: no payment is taken. The final price is confirmed by the server.",
+        hint: "Nothing is charged now: you pay the shop when you collect. The final price is confirmed by the server.",
       }}
     >
       <div className="mx-auto max-w-xl">

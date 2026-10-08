@@ -192,7 +192,7 @@ begin
   select count(*) into n from public.orders where id = o2;
   r := r || case when n = 0 then 'PASS shopkeeper: cannot read another shop''s order' else 'FAIL shopkeeper: read other shop order' end;
   select count(*) into n from public.orders where id = o1u;
-  r := r || case when n = 0 then 'PASS shopkeeper: cannot see UNPAID orders of own shop' else 'FAIL shopkeeper: sees unpaid order' end;
+  r := r || case when n = 0 then 'PASS shopkeeper: cannot see UNPAID ONLINE orders of own shop' else 'FAIL shopkeeper: sees unpaid order' end;
   select count(*) into n from public.orders where id in (o1, o3);
   r := r || case when n = 2 then 'PASS shopkeeper: sees paid orders of own shop' else 'FAIL shopkeeper: own-shop orders n=' || n end;
   select count(*) into n from public.order_files where order_id in (o2, o1u);
@@ -551,5 +551,128 @@ begin
   r := r || case when n = 0 then 'PASS no protected file was marked deleted' else 'FAIL protected file marked deleted' end;
 
   raise exception E'PART B REPORT (everything rolled back)%\n-- FAIL count: %', regexp_replace(r, '(PASS|FAIL) ', E'\n\\1 ', 'g'),
+    (length(r) - length(replace(r, 'FAIL ', ''))) / 5;
+end $$;
+
+
+-- ===================================== PART C: PAY_AT_COUNTER lifecycle =======
+do $$
+declare
+  stu   uuid := 'b0525bd1-1533-414a-9463-c6cd16bf5d8e';
+  shk   uuid := '37ee3d16-d5a7-4105-88f3-8485579ca862';
+  stu2  uuid := '00000000-0000-4000-8000-0000000000a2';
+  shk2  uuid := '00000000-0000-4000-8000-0000000000b2';
+  sh1 uuid; sh2 uuid := gen_random_uuid();
+  oc1 uuid; oc3 uuid; oo1 uuid; oc2 uuid; oStale uuid;
+  ord public.orders;
+  n int; r text := '';
+begin
+  select id into sh1 from public.shops where slug = 'abc-xerox';
+  if sh1 is null then raise exception 'ABORT: shop abc-xerox missing'; end if;
+
+  insert into auth.users (id, email, aud, role) values
+    (stu2, 'fixture-student2@example.invalid', 'authenticated', 'authenticated'),
+    (shk2, 'fixture-shopkeeper2@example.invalid', 'authenticated', 'authenticated');
+  insert into public.shops (id, name, slug, order_prefix, is_verified, is_open) values (sh2, 'Fixture Shop 2', 'fixture-2', 'Y', true, true);
+  update public.profiles set role = 'shopkeeper', shop_id = sh2 where id = shk2;
+
+  insert into public.orders (student_id, shop_id, colour_mode, paper_size, sides, copies, total_pages, sheets, rate_per_sheet_paise, total_paise, payment_method)
+  values (stu, sh1, 'bw','a4','single',1,1,1,200,200,'PAY_AT_COUNTER') returning id into oc1;
+  insert into public.orders (student_id, shop_id, colour_mode, paper_size, sides, copies, total_pages, sheets, rate_per_sheet_paise, total_paise, payment_method)
+  values (stu, sh1, 'bw','a4','single',1,1,1,200,200,'PAY_AT_COUNTER') returning id into oc3;
+  insert into public.orders (student_id, shop_id, colour_mode, paper_size, sides, copies, total_pages, sheets, rate_per_sheet_paise, total_paise)
+  values (stu, sh1, 'bw','a4','single',1,1,1,200,200) returning id into oo1;
+  insert into public.orders (student_id, shop_id, colour_mode, paper_size, sides, copies, total_pages, sheets, rate_per_sheet_paise, total_paise, payment_method)
+  values (stu2, sh2, 'bw','a4','single',1,1,1,100,100,'PAY_AT_COUNTER') returning id into oc2;
+  insert into public.order_files (order_id, storage_path, original_name, mime_type, size_bytes, page_count) values
+    (oc1, stu::text  || '/c1/a.pdf', 'a.pdf', 'application/pdf', 10, 1),
+    (oo1, stu::text  || '/o1/b.pdf', 'b.pdf', 'application/pdf', 10, 1),
+    (oc2, stu2::text || '/c2/c.pdf', 'c.pdf', 'application/pdf', 10, 1);
+  insert into storage.objects (bucket_id, name) values
+    ('print-files', stu::text || '/c1/a.pdf'), ('print-files', stu::text || '/o1/b.pdf'), ('print-files', stu2::text || '/c2/c.pdf');
+
+  -- trusted owner: an unpaid ONLINE order still cannot be worked
+  begin update public.orders set status = 'ACCEPTED' where id = oo1; r := r || 'FAIL unpaid ONLINE order accepted'; exception when check_violation then r := r || 'PASS unpaid ONLINE order still cannot be accepted (even by a trusted caller)'; end;
+  begin update public.orders set payment_method = 'ONLINE' where id = oc1; r := r || 'FAIL payment_method changed'; exception when insufficient_privilege then r := r || 'PASS payment_method is immutable once created'; end;
+
+  -- service role: a counter order can never get an online payment attached
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true); set local role service_role;
+  begin perform public.attach_payment_order(oc1, stu, 'order_ABCdef123456'); r := r || 'FAIL gateway order attached to counter order'; exception when others then r := r || case when sqlstate = 'P0001' then 'PASS counter order cannot get an online payment attached' else 'FAIL attach: ' || sqlstate end; end;
+  reset role;
+
+  -- STUDENT
+  perform set_config('request.jwt.claims', json_build_object('sub', stu, 'role', 'authenticated')::text, true);
+  set local role authenticated;
+  update public.orders set payment_status = 'PAID' where id = oc1; get diagnostics n = row_count;
+  r := r || case when n = 0 then 'PASS student: cannot mark counter order paid' else 'FAIL student: updated counter order' end;
+  update public.orders set status = 'ACCEPTED' where id = oc1; get diagnostics n = row_count;
+  r := r || case when n = 0 then 'PASS student: cannot accept own order' else 'FAIL student: accepted own order' end;
+
+  -- SHOPKEEPER (shop 1)
+  reset role;
+  perform set_config('request.jwt.claims', json_build_object('sub', shk, 'role', 'authenticated')::text, true);
+  set local role authenticated;
+  select count(*) into n from public.orders where id = oc1;
+  r := r || case when n = 1 then 'PASS shopkeeper: sees own shop''s unpaid COUNTER order' else 'FAIL shopkeeper: counter order hidden' end;
+  select count(*) into n from public.orders where id = oo1;
+  r := r || case when n = 0 then 'PASS shopkeeper: still cannot see unpaid ONLINE order' else 'FAIL shopkeeper: sees unpaid online order' end;
+  select count(*) into n from public.orders where id = oc2;
+  r := r || case when n = 0 then 'PASS shopkeeper: cannot see another shop''s counter order' else 'FAIL shopkeeper: sees other shop counter order' end;
+  select count(*) into n from public.order_files where order_id = oc1;
+  r := r || case when n = 1 then 'PASS shopkeeper: reads counter order''s file row' else 'FAIL shopkeeper: counter file row n=' || n end;
+  select count(*) into n from storage.objects where name = stu::text || '/c1/a.pdf';
+  r := r || case when n = 1 then 'PASS shopkeeper: can read counter order''s stored file' else 'FAIL shopkeeper: counter file unreadable' end;
+  select count(*) into n from storage.objects where name in (stu::text || '/o1/b.pdf', stu2::text || '/c2/c.pdf');
+  r := r || case when n = 0 then 'PASS shopkeeper: cannot read unpaid-online or other shop''s files' else 'FAIL shopkeeper: foreign files n=' || n end;
+  begin update public.orders set payment_status = 'PAID' where id = oc1; r := r || 'FAIL shopkeeper: marked counter order paid'; exception when others then r := r || 'PASS shopkeeper: cannot mark counter order paid'; end;
+  begin update public.orders set total_paise = 1, rate_per_sheet_paise = 1 where id = oc1; r := r || 'FAIL shopkeeper: changed price'; exception when others then r := r || 'PASS shopkeeper: cannot change counter order price'; end;
+  begin update public.orders set payment_method = 'ONLINE' where id = oc1; r := r || 'FAIL shopkeeper: changed payment method'; exception when others then r := r || 'PASS shopkeeper: cannot change payment method'; end;
+  begin update public.orders set status = 'READY' where id = oc1; r := r || 'FAIL shopkeeper: skipped to READY'; exception when others then r := r || 'PASS shopkeeper: cannot skip PENDING -> READY'; end;
+  begin update public.orders set status = 'REJECTED' where id = oc3; r := r || 'FAIL shopkeeper: rejected without reason'; exception when others then r := r || 'PASS shopkeeper: reject requires a reason'; end;
+  update public.orders set status = 'ACCEPTED' where id = oc2; get diagnostics n = row_count;
+  r := r || case when n = 0 then 'PASS shopkeeper: cannot accept another shop''s order' else 'FAIL shopkeeper: accepted other shop order' end;
+  update public.orders set status = 'ACCEPTED' where id = oc1; get diagnostics n = row_count;
+  r := r || case when n = 1 then 'PASS shopkeeper: accept counter order' else 'FAIL accept' end;
+  update public.orders set status = 'PRINTING' where id = oc1; get diagnostics n = row_count;
+  r := r || case when n = 1 then 'PASS shopkeeper: start printing' else 'FAIL printing' end;
+  update public.orders set status = 'READY' where id = oc1; get diagnostics n = row_count;
+  r := r || case when n = 1 then 'PASS shopkeeper: mark ready' else 'FAIL ready' end;
+  update public.orders set status = 'COMPLETED' where id = oc1; get diagnostics n = row_count;
+  r := r || case when n = 1 then 'PASS shopkeeper: complete' else 'FAIL complete' end;
+  update public.orders set status = 'REJECTED', status_reason = 'File is blank' where id = oc3; get diagnostics n = row_count;
+  r := r || case when n = 1 then 'PASS shopkeeper: reject with reason' else 'FAIL reject' end;
+
+  -- shopkeeper 2 cannot see shop 1's counter orders
+  reset role;
+  perform set_config('request.jwt.claims', json_build_object('sub', shk2, 'role', 'authenticated')::text, true);
+  set local role authenticated;
+  select count(*) into n from public.orders where id in (oc1, oc3);
+  r := r || case when n = 0 then 'PASS shopkeeper2: cannot see shop 1''s counter orders' else 'FAIL shopkeeper2 sees shop 1' end;
+  reset role;
+
+  select * into ord from public.orders where id = oc1;
+  r := r || case when ord.status = 'COMPLETED' and ord.payment_status = 'PENDING' and ord.paid_at is null
+                  and ord.accepted_at is not null and ord.ready_at is not null and ord.files_purge_after is not null
+             then 'PASS completed counter order stays UNPAID, has timestamps and a purge date' else 'FAIL counter end state' end;
+  select count(*) into n from public.notifications where order_id = oc1 and user_id = stu
+     and type in ('order_accepted', 'order_printing', 'order_ready', 'order_completed');
+  r := r || case when n = 4 then 'PASS student notified: accepted, printing, ready, completed' else 'FAIL notifications n=' || n end;
+  select count(*) into n from public.notifications where order_id = oc3 and user_id = stu and type = 'order_rejected' and body = 'File is blank';
+  r := r || case when n = 1 then 'PASS student notified of rejection with the reason' else 'FAIL rejection notification' end;
+  select count(*) into n from public.notifications where order_id in (oc1, oc3) and user_id <> stu;
+  r := r || case when n = 0 then 'PASS notifications go only to the order''s student' else 'FAIL notifications leaked n=' || n end;
+  select count(*) into n from public.files_due_for_purge(500) d join public.order_files f on f.id = d.file_id where f.order_id = oc1;
+  r := r || case when n = 0 then 'PASS just-completed counter order''s file is not purged yet' else 'FAIL purged too early' end;
+
+  -- 24h auto-cancel of a never-accepted counter order
+  insert into public.orders (student_id, shop_id, colour_mode, paper_size, sides, copies, total_pages, sheets, rate_per_sheet_paise, total_paise, payment_method, created_at)
+  values (stu, sh1, 'bw','a4','single',1,1,1,200,200,'PAY_AT_COUNTER', now() - interval '25 hours') returning id into oStale;
+  perform private.cancel_stale_unpaid_orders();
+  select count(*) into n from public.orders where id = oStale and status = 'CANCELLED' and status_reason like 'Not accepted%';
+  r := r || case when n = 1 then 'PASS stale counter order auto-cancelled with an honest reason' else 'FAIL stale counter order' end;
+  select count(*) into n from public.orders where id = oc1 and status = 'COMPLETED';
+  r := r || case when n = 1 then 'PASS auto-cancel never touches worked orders' else 'FAIL auto-cancel touched oc1' end;
+
+  raise exception E'PART C REPORT (everything rolled back)%\n-- FAIL count: %', regexp_replace(r, '(PASS|FAIL) ', E'\n\\1 ', 'g'),
     (length(r) - length(replace(r, 'FAIL ', ''))) / 5;
 end $$;

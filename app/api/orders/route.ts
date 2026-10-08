@@ -15,7 +15,8 @@ import { createAdminClient } from "@/utils/supabase/admin";
  * Here the server: authenticates the student, downloads each file from private
  * Storage, checks the real bytes (magic bytes, size, extension, page count with
  * a real PDF parser) and only then calls create_order_verified, which prices
- * the order from the database's shop_pricing. That function is executable by
+ * the order from the database's shop_pricing (as PAY_AT_COUNTER until online
+ * payment is live). That function is executable by
  * the service role only, so there is no way to reach it with a made-up page
  * count.
  */
@@ -55,6 +56,9 @@ export function POST(request: Request) {
       p_copies: input.copies,
       p_files: files,
       p_student_note: input.note,
+      // Razorpay isn't live: every order is paid in person at pickup. The order
+      // stays unpaid; nothing here (or anywhere in the browser) can mark it PAID.
+      p_payment_method: "PAY_AT_COUNTER",
     });
     if (error || !data) {
       logServerError("api/orders:create", error);
@@ -63,6 +67,8 @@ export function POST(request: Request) {
 
     const order = data as {
       id: string;
+      order_number: string | null;
+      payment_method: string;
       status: string;
       payment_status: string;
       total_pages: number;
@@ -74,6 +80,8 @@ export function POST(request: Request) {
       {
         order: {
           id: order.id,
+          orderNumber: order.order_number,
+          paymentMethod: order.payment_method,
           status: order.status,
           paymentStatus: order.payment_status,
           totalPages: order.total_pages,

@@ -20,6 +20,7 @@ import {
   isUuid,
   parseCreateOrder,
   parseUploadRequest,
+  parseStatusChange,
   safeNextPath,
 } from "../lib/server/validate";
 
@@ -118,6 +119,28 @@ describe("input validation", () => {
       { mime: "image/png", extension: "png", sizeBytes: 10, name: "a", path: "../x" },
     ]) {
       assert.throws(() => parseUploadRequest(b), ValidationError);
+    }
+  });
+});
+
+describe("shop status changes", () => {
+  it("accepts forward moves without a reason", () => {
+    for (const status of ["ACCEPTED", "PRINTING", "READY", "COMPLETED"]) {
+      assert.deepEqual(parseStatusChange({ status }), { status, reason: null });
+    }
+  });
+  it("requires a short reason to reject or cancel", () => {
+    assert.equal(parseStatusChange({ status: "REJECTED", reason: " blank file " }).reason, "blank file");
+    for (const reason of [undefined, "", "   ", "x".repeat(201)]) {
+      assert.throws(() => parseStatusChange({ status: "CANCELLED", reason }), ValidationError);
+    }
+  });
+  it("rejects PENDING/PAID/unknown targets and any extra field (payment, price)", () => {
+    for (const status of ["PENDING", "PAID", "paid", "accepted", 1, null]) {
+      assert.throws(() => parseStatusChange({ status }), ValidationError);
+    }
+    for (const extra of ["payment_status", "total_paise", "shop_id"]) {
+      assert.throws(() => parseStatusChange({ status: "ACCEPTED", [extra]: "PAID" }), ValidationError);
     }
   });
 });
