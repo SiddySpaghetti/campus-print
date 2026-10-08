@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:security": "npx --yes tsx --test tests/server-security.test.ts tests/webhook-route.test.ts tests/flow.test.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",
@@ -17,6 +18,7 @@
     "lucide-react": "^1.48.0",
     "motion": "^13.4.3",
     "next": "16.3.6",
+    "pdf-lib": "^1.17.1",
     "radix-ui": "^1.6.7",
     "react": "19.2.8",
     "react-dom": "19.2.8",

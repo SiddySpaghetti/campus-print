@@ -78,10 +78,12 @@ export function PrintShopCard({
         ) : null}
       </h3>
 
-      <p className="mt-1.5 flex items-center gap-1.5 text-[13px] text-muted-foreground">
-        <MapPin aria-hidden="true" className="size-3.5" strokeWidth={1.75} />
-        {formatDistance(shop.distanceMetres)}
-      </p>
+      {shop.distanceMetres === null ? null : (
+        <p className="mt-1.5 flex items-center gap-1.5 text-[13px] text-muted-foreground">
+          <MapPin aria-hidden="true" className="size-3.5" strokeWidth={1.75} />
+          {formatDistance(shop.distanceMetres)}
+        </p>
+      )}
 
       {/* Pricing + preparation time */}
       <dl className="mt-5 flex flex-col gap-2 border-t border-line pt-4 text-[13px]">
@@ -140,7 +142,7 @@ export function PrintShopCard({
             </Link>
           </Button>
         ) : (
-          <Button type="button" variant={actionVariant} className="mt-4 w-full">
+          <Button type="button" variant={actionVariant} className="mt-4 w-full" disabled>
             {actionLabel}
             <span className="sr-only">{` — ${shop.name}`}</span>
             <ArrowRight aria-hidden="true" />

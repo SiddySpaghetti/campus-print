@@ -7,7 +7,8 @@ import { FileText, UploadCloud, X } from "lucide-react";
 import { DrawCheck } from "@/components/flow/draw-check";
 import { useFlow } from "@/components/flow/flow-state";
 import { Button } from "@/components/ui/button";
-import { formatPageCount, resolvePageCount } from "@/lib/page-count";
+import { postJson } from "@/lib/api-client";
+import { formatPageCount } from "@/lib/page-count";
 import {
   ACCEPTED_FILE_HINT,
   ACCEPTED_FILE_TYPES,
@@ -15,6 +16,7 @@ import {
   formatFileSize,
 } from "@/lib/pricing";
 import { cn } from "@/lib/utils";
+import { createClient } from "@/utils/supabase/client";
 
 const EASE_OUT = [0.22, 1, 0.36, 1] as const;
 const MAX_BYTES = 25 * 1024 * 1024;
@@ -35,8 +37,10 @@ const SETTLE = {
  * The chosen document behaves like a sheet of paper: it comes in from above,
  * slightly rotated, and settles into the tray below the zone.
  *
- * Nothing is uploaded. Only the file's name, type, size and page count are
- * kept, since that is all the rest of the prototype needs.
+ * The file is uploaded straight away: POST /api/uploads returns a server-chosen
+ * path and a single-use signed upload URL token, and the bytes go directly to
+ * the private Storage bucket. The server then inspects the stored bytes
+ * (/api/uploads/inspect) and returns the real page count, or rejects the file.
  */
 export function UploadDropzone() {
   const { file, setFile } = useFlow();
@@ -44,9 +48,10 @@ export function UploadDropzone() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
 
   const accept = async (incoming: File | undefined) => {
-    if (!incoming) return;
+    if (!incoming || uploading) return;
 
     if (!ACCEPTED_FILE_TYPES.includes(incoming.type as (typeof ACCEPTED_FILE_TYPES)[number])) {
       setError(`That file type isn't supported. Choose a ${ACCEPTED_FILE_HINT} file.`);
@@ -58,14 +63,34 @@ export function UploadDropzone() {
     }
 
     setError(null);
-    const { pageCount, source } = await resolvePageCount(incoming);
-    setFile({
-      name: incoming.name,
-      type: incoming.type,
-      sizeBytes: incoming.size,
-      pageCount,
-      pageCountSource: source,
-    });
+    setUploading(true);
+    try {
+      const { path, token } = await postJson<{ path: string; token: string }>("/api/uploads", {
+        mime: incoming.type,
+        extension: incoming.name.split(".").pop()?.toLowerCase() ?? "",
+        sizeBytes: incoming.size,
+        name: incoming.name,
+      });
+      const { error: uploadError } = await createClient()
+        .storage.from("print-files")
+        .uploadToSignedUrl(path, token, incoming, { contentType: incoming.type });
+      if (uploadError) throw new Error("Upload failed. Please try again.");
+      // The server reads the stored bytes: real page count, or a rejection.
+      const { pageCount } = await postJson<{ pageCount: number }>("/api/uploads/inspect", { path });
+
+      setFile({
+        name: incoming.name,
+        type: incoming.type,
+        sizeBytes: incoming.size,
+        pageCount,
+        path,
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Upload failed. Please try again.");
+      if (inputRef.current) inputRef.current.value = "";
+    } finally {
+      setUploading(false);
+    }
   };
 
   const clear = () => {
@@ -131,9 +156,10 @@ export function UploadDropzone() {
           variant="outline"
           size="lg"
           className="mt-6"
+          disabled={uploading}
           onClick={() => inputRef.current?.click()}
         >
-          Choose file
+          {uploading ? "Uploading…" : "Choose file"}
         </Button>
 
         <input
@@ -192,7 +218,6 @@ export function UploadDropzone() {
                   <p className="mt-0.5 text-[13px] text-muted-foreground">
                     {fileKindLabel(file)} · {formatFileSize(file.sizeBytes)} ·{" "}
                     {formatPageCount(file.pageCount)}
-                    {file.pageCountSource === "estimate" ? " (estimated)" : null}
                   </p>
                 </motion.div>
 
@@ -226,7 +251,8 @@ export function UploadDropzone() {
       </AnimatePresence>
 
       <p className="text-[13px] text-muted-foreground">
-        Your file stays on your device in this prototype — nothing is uploaded yet.
+        Files are stored privately: only you, and the shop once it has your order, can
+        open them.
       </p>
     </div>
   );

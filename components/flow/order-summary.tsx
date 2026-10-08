@@ -52,7 +52,7 @@ export function OrderSummary({
 }) {
   const { shop, file, options, pageCount, price } = useFlow();
 
-  if (!shop || !price) return null;
+  if (!shop) return null;
 
   return (
     <motion.div
@@ -107,13 +107,7 @@ export function OrderSummary({
               <p className="truncate text-[15px] font-medium text-ink">{file.name}</p>
               <p className="mt-0.5 text-[13px] text-muted-foreground">
                 {fileKindLabel(file)} · {formatFileSize(file.sizeBytes)} ·{" "}
-                {file.pageCountSource === "estimate" ? (
-                  <span title="Estimated: this PDF's page tree is compressed, so the count couldn't be read">
-                    {formatPageCount(pageCount)} (estimated)
-                  </span>
-                ) : (
-                  formatPageCount(pageCount)
-                )}
+                {formatPageCount(pageCount)}
               </p>
             </div>
           </div>
@@ -146,8 +140,9 @@ export function OrderSummary({
       >
         <div>
           <p className="font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
-            Estimated total
+            Total
           </p>
+          {price ? (
           <p className="mt-0.5 text-[12px] text-muted-foreground">
             {formatSheetCount(price.sheets)} ·{" "}
             {new Intl.NumberFormat("en-IN", {
@@ -157,11 +152,18 @@ export function OrderSummary({
             }).format(price.ratePerSheet)}{" "}
             each
           </p>
+          ) : (
+            <p className="mt-0.5 text-[12px] text-muted-foreground">
+              Not offered at this shop
+            </p>
+          )}
         </div>
-        <AnimatedTotal
-          amount={price.total}
-          className="font-mono text-[28px] font-semibold leading-none tracking-[-0.03em] text-ink"
-        />
+        {price ? (
+          <AnimatedTotal
+            amount={price.total}
+            className="font-mono text-[28px] font-semibold leading-none tracking-[-0.03em] text-ink"
+          />
+        ) : null}
       </motion.div>
     </motion.div>
   );

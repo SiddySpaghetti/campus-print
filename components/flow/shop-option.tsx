@@ -31,7 +31,8 @@ export function ShopOption({
 }: {
   shop: PrintShop;
   selected: boolean;
-  onSelect: () => void;
+  /** Omitted for a closed shop: the card then shows no select action. */
+  onSelect?: () => void;
   anySelected: boolean;
 }) {
   return (
@@ -73,7 +74,7 @@ export function ShopOption({
         shop={shop}
         selected={selected}
         onSelect={onSelect}
-        actionLabel="Select shop"
+        actionLabel={onSelect ? "Select shop" : "Closed now"}
         actionVariant="default"
       />
     </motion.div>

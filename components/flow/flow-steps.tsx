@@ -18,13 +18,11 @@ import { cn } from "@/lib/utils";
  */
 export function FlowSteps() {
   const pathname = usePathname();
-  const { canAccess, completedSteps, paymentStatus } = useFlow();
-  const paid = paymentStatus === "paid";
+  const { canAccess, completedSteps, orderId } = useFlow();
+  const placed = Boolean(orderId);
 
-  // /success sits between payment and track, so treat it as the payment step.
-  const activeId: FlowStepId = pathname.endsWith("/success")
-    ? "payment"
-    : (flowSteps.find((step) => step.href === pathname)?.id ?? "shop");
+  const activeId: FlowStepId =
+    flowSteps.find((step) => step.href === pathname)?.id ?? "shop";
   const activeIndex = flowSteps.findIndex((step) => step.id === activeId);
 
   return (
@@ -33,9 +31,9 @@ export function FlowSteps() {
         {flowSteps.map((step, index) => {
           const isActive = step.id === activeId;
           const isDone = completedSteps[step.id] && index < activeIndex;
-          // Once paid, the pre-payment steps are history — they stop being
-          // links so the rail can't send anyone back into a completed order.
-          const settled = paid && step.id !== "payment" && step.id !== "track";
+          // Once placed, the earlier steps are history — they stop being
+          // links so the rail can't send anyone back into a placed order.
+          const settled = placed && step.id !== "track";
           const reachable = canAccess(step.id) && !isActive && !settled;
 
           const body = (
@@ -82,7 +80,7 @@ export function FlowSteps() {
 
               {reachable ? (
                 <Link
-                  href={step.href}
+                  href={step.id === "track" && orderId ? `${step.href}?order=${orderId}` : step.href}
                   className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   aria-label={`Back to ${step.label}`}
                 >

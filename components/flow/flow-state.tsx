@@ -2,37 +2,30 @@
 
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 
-import { printShops, type PrintShop } from "@/lib/data/print-shops";
 import {
   canAccessStep,
   type FlowProgress,
   type FlowStepId,
 } from "@/lib/flow-access";
-import type { PageCountSource } from "@/lib/page-count";
 import {
   calculatePrice,
   defaultPrintOptions,
-  DEMO_PAGE_COUNT,
   MAX_COPIES,
   MIN_COPIES,
   type PriceBreakdown,
   type PrintOptions,
 } from "@/lib/pricing";
+import type { FlowShop } from "@/lib/shops";
 
 export type FlowFile = {
   name: string;
   type: string;
   sizeBytes: number;
-  /** Printable pages in this document: 1 for an image, counted for a PDF. */
+  /** Pages as counted by the server from the stored bytes. */
   pageCount: number;
-  /** How that number was arrived at, so the UI can flag an estimate. */
-  pageCountSource: PageCountSource;
+  /** Server-chosen Storage path from POST /api/uploads; the file is uploaded. */
+  path: string;
 };
-
-export type PaymentMethod = "upi" | "card" | "cash";
-export type PaymentStatus = "idle" | "processing" | "paid";
-/** Mirrors the tracking timeline on the order screen. */
-export type OrderStatus = "received" | "accepted" | "printing" | "ready";
 
 // Re-exported so flow components have one import for the step vocabulary.
 export type { FlowStepId };
@@ -42,33 +35,27 @@ export const flowSteps: { id: FlowStepId; label: string; href: string }[] = [
   { id: "upload", label: "Upload", href: "/start-printing/upload" },
   { id: "options", label: "Options", href: "/start-printing/options" },
   { id: "review", label: "Review", href: "/start-printing/review" },
-  { id: "payment", label: "Payment", href: "/start-printing/payment" },
   { id: "track", label: "Track", href: "/start-printing/track" },
 ];
 
-/** Demo order number, matching the ticket shown on the landing page. */
-export const ORDER_TOKEN = "A-042";
-
-const STORAGE_KEY = "campusprint.flow.v1";
+const STORAGE_KEY = "campusprint.flow.v2";
 
 type FlowSnapshot = {
-  shopId: string | null;
+  /** Display copy of the chosen shop; the server re-reads the real one. */
+  shop: FlowShop | null;
   file: FlowFile | null;
   options: PrintOptions;
-  paymentMethod: PaymentMethod;
-  paymentStatus: PaymentStatus;
-  orderStatus: OrderStatus;
+  /** Set once POST /api/orders succeeds. */
+  orderId: string | null;
   /** False until sessionStorage has been read, so guards don't fire too early. */
   ready: boolean;
 };
 
 const emptyFlow: FlowSnapshot = {
-  shopId: null,
+  shop: null,
   file: null,
   options: defaultPrintOptions,
-  paymentMethod: "upi",
-  paymentStatus: "idle",
-  orderStatus: "received",
+  orderId: null,
   ready: false,
 };
 
@@ -76,7 +63,8 @@ const emptyFlow: FlowSnapshot = {
  * The flow lives in a module-level store rather than component state. It keeps
  * one copy of the order for the whole journey, survives navigation between
  * steps, and is mirrored into sessionStorage so a refresh mid-flow doesn't
- * lose the order. Nothing here talks to a server — this is a prototype.
+ * lose the order. It holds only what the student chose; prices shown from it
+ * are estimates; the server prices the order itself.
  */
 let snapshot: FlowSnapshot = emptyFlow;
 let hydrationStarted = false;
@@ -148,8 +136,8 @@ export function resetFlow() {
   emit();
 }
 
-export function selectShop(shopId: string) {
-  write({ shopId });
+export function selectShop(shop: FlowShop) {
+  write({ shop });
 }
 
 export function setFile(file: FlowFile | null) {
@@ -165,39 +153,27 @@ export function setCopies(copies: number) {
   write({ options: { ...snapshot.options, copies: clamped } });
 }
 
-export function setPaymentMethod(paymentMethod: PaymentMethod) {
-  write({ paymentMethod });
-}
-
-export function setPaymentStatus(paymentStatus: PaymentStatus) {
-  write({ paymentStatus });
-}
-
-export function setOrderStatus(orderStatus: OrderStatus) {
-  if (snapshot.orderStatus === orderStatus) return;
-  write({ orderStatus });
+export function setOrderId(orderId: string) {
+  write({ orderId });
 }
 
 /** Shapes the snapshot for the pure policy in lib/flow-access.ts. */
 export function toProgress(flow: FlowSnapshot): FlowProgress {
   return {
-    hasShop: Boolean(flow.shopId),
+    hasShop: Boolean(flow.shop),
     hasFile: Boolean(flow.file),
-    paid: flow.paymentStatus === "paid",
+    placed: Boolean(flow.orderId),
   };
 }
 
 export type FlowValue = FlowSnapshot & {
-  shop: PrintShop | null;
   pageCount: number;
   price: PriceBreakdown | null;
   selectShop: typeof selectShop;
   setFile: typeof setFile;
   setOptions: typeof setOptions;
   setCopies: typeof setCopies;
-  setPaymentMethod: typeof setPaymentMethod;
-  setPaymentStatus: typeof setPaymentStatus;
-  setOrderStatus: typeof setOrderStatus;
+  setOrderId: typeof setOrderId;
   resetFlow: typeof resetFlow;
   canAccess: (step: FlowStepId) => boolean;
   completedSteps: Record<FlowStepId, boolean>;
@@ -212,14 +188,9 @@ export function useFlow(): FlowValue {
     hydrate();
   }, []);
 
-  const shop = useMemo(
-    () => printShops.find((item) => item.id === flow.shopId) ?? null,
-    [flow.shopId],
-  );
+  const { shop } = flow;
 
-  // The chosen document decides the page count; the fixed estimate is only a
-  // fallback for PDFs we couldn't read, and for before a file is picked.
-  const pageCount = flow.file?.pageCount ?? DEMO_PAGE_COUNT;
+  const pageCount = flow.file?.pageCount ?? 1;
 
   const price = useMemo(
     () =>
@@ -236,28 +207,24 @@ export function useFlow(): FlowValue {
 
   const completedSteps = useMemo<Record<FlowStepId, boolean>>(
     () => ({
-      shop: Boolean(flow.shopId),
+      shop: Boolean(shop),
       upload: Boolean(flow.file),
-      options: Boolean(flow.shopId && flow.file),
-      review: Boolean(flow.shopId && flow.file),
-      payment: flow.paymentStatus === "paid",
-      track: flow.orderStatus === "ready",
+      options: Boolean(shop && flow.file),
+      review: Boolean(flow.orderId),
+      track: false,
     }),
-    [flow.shopId, flow.file, flow.paymentStatus, flow.orderStatus],
+    [shop, flow.file, flow.orderId],
   );
 
   return {
     ...flow,
-    shop,
     pageCount,
     price,
     selectShop,
     setFile,
     setOptions,
     setCopies,
-    setPaymentMethod,
-    setPaymentStatus,
-    setOrderStatus,
+    setOrderId,
     resetFlow,
     canAccess,
     completedSteps,

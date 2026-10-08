@@ -17,17 +17,21 @@ import {
 } from "@/lib/pricing";
 
 export default function OptionsPage() {
-  const { options, setOptions, setCopies } = useFlow();
+  const { options, setOptions, setCopies, price } = useFlow();
 
   return (
     <FlowShell
       step="options"
-      eyebrow="Step 3 of 6"
+      eyebrow="Step 3 of 5"
       title="How should we print it?"
       description="Prices update as you change the settings."
       entrance="tactile"
       back={{ href: "/start-printing/upload" }}
-      next={{ href: "/start-printing/review" }}
+      next={{
+        href: "/start-printing/review",
+        disabled: !price,
+        hint: price ? undefined : "This shop doesn't offer that colour and paper combination.",
+      }}
     >
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] lg:gap-10">
         <div className="flex flex-col divide-y divide-line rounded-card border border-line bg-card">
@@ -41,7 +45,7 @@ export default function OptionsPage() {
             />
           </Row>
 
-          <Row label="Paper" hint="A3 is double the price of A4.">
+          <Row label="Paper" hint="A3 is priced per sheet by the shop.">
             <SegmentedControl
               label="Paper size"
               options={paperOptions}

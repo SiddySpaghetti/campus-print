@@ -10,7 +10,7 @@ export default function UploadPage() {
   return (
     <FlowShell
       step="upload"
-      eyebrow="Step 2 of 6"
+      eyebrow="Step 2 of 5"
       title="Upload your document"
       description={
         shop

@@ -1,12 +1,12 @@
 /**
- * MOCK PRICING — the single source of truth for print option types, labels and
- * the price calculation used across the student flow.
+ * Print option types, labels and the price ESTIMATE shown in the student flow.
  *
- * Shops are charged per *sheet*, not per page: printing double-sided puts two
- * pages on one sheet, so it is cheaper. A3 costs double an A4 sheet. Swap the
- * constants (or the whole function) for real shop rates later.
+ * Shops charge per *sheet*: double-sided puts two pages on one sheet. Rates
+ * come from the shop's real shop_pricing rows. The authoritative total is
+ * computed by the database (create_order_verified) from server-counted pages;
+ * this mirrors its sheet maths so the estimate matches for readable files.
  */
-import type { PrintShop } from "@/lib/data/print-shops";
+import type { FlowShop } from "@/lib/shops";
 
 export type ColourMode = "bw" | "colour";
 export type PaperSize = "a4" | "a3";
@@ -26,18 +26,8 @@ export const defaultPrintOptions: PrintOptions = {
   copies: 1,
 };
 
-/**
- * Fallback page count, used only for a PDF whose page tree can't be read (and
- * before any document is chosen). Images and readable PDFs report their real
- * count — see `resolvePageCount` in lib/page-count.ts.
- */
-export const DEMO_PAGE_COUNT = 12;
-
 export const MIN_COPIES = 1;
 export const MAX_COPIES = 20;
-
-/** An A3 sheet costs this much more than A4. */
-const A3_MULTIPLIER = 2;
 
 // `as const satisfies` keeps the literal types, so these labels can be handed
 // straight to components with narrower unions (e.g. the order ticket).
@@ -81,27 +71,28 @@ export type PriceBreakdown = {
   total: number;
 };
 
+/** Null when the shop doesn't offer this colour/paper combination. */
 export function calculatePrice({
   shop,
   options,
   pageCount,
 }: {
-  shop: PrintShop;
+  shop: FlowShop;
   options: PrintOptions;
   pageCount: number;
-}): PriceBreakdown {
-  const base = options.colour === "colour" ? shop.colourFromInr : shop.bwFromInr;
-  const ratePerSheet = base * (options.paper === "a3" ? A3_MULTIPLIER : 1);
+}): PriceBreakdown | null {
+  const ratePaise = shop.ratesPaise[`${options.colour}_${options.paper}`];
+  if (ratePaise === undefined) return null;
   const sheetsPerCopy =
     options.sides === "double" ? Math.ceil(pageCount / 2) : pageCount;
   const sheets = sheetsPerCopy * Math.max(MIN_COPIES, options.copies);
 
   return {
-    ratePerSheet,
+    ratePerSheet: ratePaise / 100,
     sheetsPerCopy,
     sheets,
-    // Guard against float drift from the 1.50 rates.
-    total: Math.round(ratePerSheet * sheets * 100) / 100,
+    // Integer paise first, so there's no float drift.
+    total: (ratePaise * sheets) / 100,
   };
 }
 

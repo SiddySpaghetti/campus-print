@@ -62,7 +62,8 @@ type FlowShellProps = {
   /** Where to send people who land here without the prerequisites. */
   fallbackHref?: string;
   back?: { label?: string; href: string };
-  next?: { label?: string; href: string; disabled?: boolean; hint?: string };
+  /** `onClick` turns the continue link into an action button (Place order). */
+  next?: { label?: string; href?: string; onClick?: () => void; disabled?: boolean; hint?: string };
   /** Hides the footer for screens with their own actions. */
   hideFooter?: boolean;
 };
@@ -71,7 +72,7 @@ type FlowShellProps = {
  * Shared frame for every flow screen: stage-appropriate entrance, heading,
  * the back/continue footer (sticky on phones) and the guard that stops people
  * deep-linking past a step they haven't completed — or back into an order
- * they've already paid for.
+ * they've already placed.
  */
 export function FlowShell({
   step,
@@ -87,10 +88,10 @@ export function FlowShell({
 }: FlowShellProps) {
   const router = useRouter();
   const flow = useFlow();
-  const { ready, resetFlow } = flow;
+  const { ready, resetFlow, orderId } = flow;
 
   // The policy itself lives in lib/flow-access.ts so it can be tested apart
-  // from React. A paid order never drops back into upload/options/review.
+  // from React. A placed order never drops back into upload/options/review.
   const disposition = stepDisposition(step, toProgress(flow));
 
   useEffect(() => {
@@ -98,12 +99,12 @@ export function FlowShell({
 
     if (disposition === "start-new-order") {
       resetFlow();
-    } else if (disposition === "forward-to-confirmation") {
-      router.replace("/start-printing/success");
+    } else if (disposition === "forward-to-tracking") {
+      router.replace(`/start-printing/track?order=${orderId}`);
     } else if (disposition === "send-to-start") {
       router.replace(fallbackHref);
     }
-  }, [ready, disposition, router, fallbackHref, resetFlow]);
+  }, [ready, disposition, router, fallbackHref, resetFlow, orderId]);
 
   // A step with no prerequisites (the shop picker) renders straight away, so
   // there's no loading flash on first paint. The rest wait for hydration.
@@ -111,8 +112,8 @@ export function FlowShell({
     return (
       <Container className="py-24">
         <p className="text-sm text-muted-foreground" aria-live="polite">
-          {disposition === "forward-to-confirmation"
-            ? "That order is already paid — opening your confirmation…"
+          {disposition === "forward-to-tracking"
+            ? "That order is already placed — opening tracking…"
             : disposition === "start-new-order"
               ? "Starting a new order…"
               : ready
@@ -162,6 +163,7 @@ export function FlowShell({
                 <ContinueButton
                   label={next.label ?? "Continue"}
                   href={next.href}
+                  onClick={next.onClick}
                   disabled={next.disabled ?? false}
                 />
               ) : null}
@@ -183,10 +185,12 @@ export function FlowShell({
 function ContinueButton({
   label,
   href,
+  onClick,
   disabled,
 }: {
   label: string;
-  href: string;
+  href?: string;
+  onClick?: () => void;
   disabled: boolean;
 }) {
   const reduced = useReducedMotion();
@@ -208,8 +212,8 @@ function ContinueButton({
       initial={false}
       animate={disabled ? "locked" : "unlocked"}
     >
-      {disabled ? (
-        <Button size="lg" disabled className="w-full md:w-auto">
+      {disabled || onClick || !href ? (
+        <Button size="lg" disabled={disabled} onClick={onClick} className="w-full md:w-auto">
           {label}
           <ArrowRight aria-hidden="true" />
         </Button>

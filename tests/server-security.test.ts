@@ -1,0 +1,261 @@
+/**
+ * Unit tests for the server-side security modules. Run: npm run test:security
+ * (uses tsx via npx; no runtime dependency is added to the app).
+ */
+import assert from "node:assert/strict";
+import { createHmac, randomUUID } from "node:crypto";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
+
+import { PDFDocument } from "pdf-lib";
+
+import { SAFE, mapDbError } from "../lib/server/errors";
+import { FileRejected, inspectFile, sniffMime } from "../lib/server/file-inspect";
+import { parsePaymentEvent, verifyWebhookSignature } from "../lib/server/razorpay";
+import {
+  ValidationError,
+  isOwnedStoragePath,
+  isUuid,
+  parseCreateOrder,
+  parseUploadRequest,
+  safeNextPath,
+} from "../lib/server/validate";
+
+const uid = randomUUID();
+const goodPath = `${uid}/${randomUUID()}/${randomUUID()}.pdf`;
+const base = {
+  shopId: randomUUID(),
+  colour: "bw",
+  paper: "a4",
+  sides: "single",
+  copies: 1,
+  files: [{ path: goodPath, name: "a.pdf" }],
+};
+const bad = (b: unknown) => assert.throws(() => parseCreateOrder(b, uid), ValidationError);
+
+async function pdf(pages: number, objectStreams = false) {
+  const d = await PDFDocument.create();
+  for (let i = 0; i < pages; i++) d.addPage();
+  return await d.save({ useObjectStreams: objectStreams });
+}
+
+const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(32)]);
+const JPG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(32)]);
+
+describe("input validation", () => {
+  it("accepts a valid order", () => assert.equal(parseCreateOrder(base, uid).copies, 1));
+
+  it("rejects client-supplied price / page_count / total (unexpected fields)", () => {
+    for (const extra of ["price", "totalPaise", "pageCount", "page_count", "ratePerSheet", "subtotal", "amount"]) {
+      bad({ ...base, [extra]: 1 });
+    }
+    bad({ ...base, files: [{ path: goodPath, name: "a.pdf", pageCount: 1 }] });
+    bad({ ...base, files: [{ path: goodPath, name: "a.pdf", size: 1, mime: "application/pdf" }] });
+  });
+
+  it("rejects bad copies", () => {
+    for (const copies of [0, -1, 21, 1000000, 1.5, "3", null, NaN, Infinity]) bad({ ...base, copies });
+  });
+
+  it("rejects invalid enums", () => {
+    bad({ ...base, colour: "rainbow" });
+    bad({ ...base, paper: "a5" });
+    bad({ ...base, sides: "triple" });
+    bad({ ...base, colour: "BW" });
+  });
+
+  it("rejects malformed UUIDs", () => {
+    for (const shopId of ["x", "", "1", `${randomUUID()};drop`, randomUUID().toUpperCase(), null, 5]) {
+      bad({ ...base, shopId });
+    }
+    assert.equal(isUuid(randomUUID()), true);
+    assert.equal(isUuid("../../etc/passwd"), false);
+  });
+
+  it("rejects other users' paths, traversal, bucket root, wrong shapes", () => {
+    const other = randomUUID();
+    for (const path of [
+      `${other}/${randomUUID()}/${randomUUID()}.pdf`,
+      `${uid}/../${other}/${randomUUID()}/${randomUUID()}.pdf`,
+      `${uid}/${randomUUID()}/../../x.pdf`,
+      "loose.pdf",
+      `${uid}/x.pdf`,
+      `${uid}/${randomUUID()}/${randomUUID()}.exe`,
+      `${uid}/${randomUUID()}/${randomUUID()}.PDF`,
+      `/${uid}/${randomUUID()}/${randomUUID()}.pdf`,
+      `${goodPath}\u0000.png`,
+      `${goodPath}/`,
+    ]) {
+      assert.equal(isOwnedStoragePath(path, uid), false, path);
+      bad({ ...base, files: [{ path, name: "x" }] });
+    }
+  });
+
+  it("rejects too many / duplicate / empty files and oversized notes", () => {
+    bad({ ...base, files: [] });
+    bad({ ...base, files: [base.files[0], base.files[0]] });
+    bad({
+      ...base,
+      files: Array.from({ length: 11 }, () => ({ path: `${uid}/${randomUUID()}/${randomUUID()}.pdf`, name: "a" })),
+    });
+    bad({ ...base, note: "x".repeat(501) });
+  });
+
+  it("rejects non-object bodies", () => {
+    for (const b of [null, [], "x", 5]) bad(b);
+  });
+
+  it("upload request: type / extension / size rules", () => {
+    assert.equal(parseUploadRequest({ mime: "application/pdf", extension: "pdf", sizeBytes: 1000, name: "a.pdf" }).ext, "pdf");
+    for (const b of [
+      { mime: "application/pdf", extension: "png", sizeBytes: 10, name: "a" },
+      { mime: "application/x-msdownload", extension: "exe", sizeBytes: 10, name: "a" },
+      { mime: "image/png", extension: "png", sizeBytes: 25 * 1024 * 1024 + 1, name: "a" },
+      { mime: "image/png", extension: "png", sizeBytes: 0, name: "a" },
+      { mime: "image/png", extension: "png", sizeBytes: -5, name: "a" },
+      { mime: "image/png", extension: "png", sizeBytes: 10, name: "a", path: "../x" },
+    ]) {
+      assert.throws(() => parseUploadRequest(b), ValidationError);
+    }
+  });
+});
+
+describe("post-login redirect", () => {
+  it("keeps same-origin paths and rejects everything else", () => {
+    assert.equal(safeNextPath("/start-printing/track?order=1"), "/start-printing/track?order=1");
+    for (const v of ["//evil.com", "/\\evil.com", "https://evil.com", "evil", "/a\nb", 5, null, "/" + "a".repeat(300)]) {
+      assert.equal(safeNextPath(v), "/start-printing", String(v));
+    }
+  });
+});
+
+describe("file inspection (server-side, content-based)", () => {
+  it("counts the REAL pages of a 10-page PDF", async () => {
+    const info = await inspectFile(await pdf(10), "pdf");
+    assert.equal(info.pageCount, 10);
+    assert.equal(info.mime, "application/pdf");
+  });
+
+  it("a client claim of page_count 1 or 9999 cannot reach pricing (field rejected; server count is 10)", async () => {
+    bad({ ...base, files: [{ path: goodPath, name: "a", pageCount: 1 }] });
+    bad({ ...base, files: [{ path: goodPath, name: "a", pageCount: 9999 }] });
+    bad({ ...base, pageCount: 1 });
+    assert.equal((await inspectFile(await pdf(10), "pdf")).pageCount, 10);
+  });
+
+  it("counts PDFs with compressed object streams (what the old regex missed)", async () => {
+    assert.equal((await inspectFile(await pdf(7, true), "pdf")).pageCount, 7);
+  });
+
+  it("images are exactly one page", async () => {
+    assert.equal((await inspectFile(PNG, "png")).pageCount, 1);
+    assert.equal((await inspectFile(JPG, "jpg")).pageCount, 1);
+    assert.equal((await inspectFile(JPG, "jpeg")).pageCount, 1);
+  });
+
+  it("rejects fake extensions / fake MIME (content decides)", async () => {
+    await assert.rejects(inspectFile(PNG, "pdf"), FileRejected);
+    await assert.rejects(inspectFile(await pdf(1), "png"), FileRejected);
+    await assert.rejects(inspectFile(Buffer.from("MZ\x90\x00 not an image"), "png"), FileRejected);
+    await assert.rejects(inspectFile(Buffer.from("<script>alert(1)</script>"), "pdf"), FileRejected);
+    assert.equal(sniffMime(Buffer.from("hello")), null);
+  });
+
+  it("rejects empty, oversized, corrupt and absurdly long PDFs", async () => {
+    await assert.rejects(inspectFile(new Uint8Array(0), "pdf"), FileRejected);
+    await assert.rejects(inspectFile(new Uint8Array(25 * 1024 * 1024 + 1), "pdf"), FileRejected);
+    await assert.rejects(inspectFile(Buffer.from("%PDF-1.7\nnot really a pdf"), "pdf"), FileRejected);
+    await assert.rejects(inspectFile(await pdf(501), "pdf"), FileRejected);
+    assert.equal((await inspectFile(await pdf(500), "pdf")).pageCount, 500);
+  });
+});
+
+describe("webhook signature", () => {
+  const secret = "test-secret-not-real";
+  const body = JSON.stringify({ event: "payment.captured", payload: {} });
+  const sign = (b: string, s = secret) => createHmac("sha256", s).update(b).digest("hex");
+
+  it("accepts a correct signature", () => {
+    assert.equal(verifyWebhookSignature(body, sign(body), secret), true);
+  });
+
+  it("rejects invalid, tampered, missing, wrong-secret and malformed signatures", () => {
+    assert.equal(verifyWebhookSignature(body, sign(body, "other"), secret), false);
+    assert.equal(verifyWebhookSignature(body + " ", sign(body), secret), false);
+    assert.equal(verifyWebhookSignature(body, null, secret), false);
+    assert.equal(verifyWebhookSignature(body, "", secret), false);
+    assert.equal(verifyWebhookSignature(body, "zz".repeat(32), secret), false);
+    assert.equal(verifyWebhookSignature(body, sign(body).slice(0, 62), secret), false);
+    assert.equal(verifyWebhookSignature(body, sign(body), ""), false);
+  });
+
+  it("extracts only the fields it needs (no PII in the stored payload)", () => {
+    const e = parsePaymentEvent({
+      event: "payment.captured",
+      payload: {
+        payment: {
+          entity: { id: "pay_1", order_id: "order_1", amount: 500, currency: "INR", email: "a@b.c", contact: "999", card: { last4: "1111" } },
+        },
+      },
+    })!;
+    assert.deepEqual(e.payload, { event: "payment.captured", order_id: "order_1", payment_id: "pay_1", amount: 500, currency: "INR" });
+    assert.equal(JSON.stringify(e.payload).includes("a@b.c"), false);
+  });
+});
+
+describe("error handling never leaks database internals", () => {
+  const leakyMessage =
+    'duplicate key value violates unique constraint "order_files_storage_path_key" on public.order_files';
+  it("maps DB errors to fixed safe messages", () => {
+    for (const code of ["23505", "42501", "P0002", "P0001", "22023", "RL001", "XX000", undefined]) {
+      const text = JSON.stringify(mapDbError({ code, message: leakyMessage }, SAFE.createFailed));
+      for (const forbidden of ["order_files", "violates", "public.", "constraint", "duplicate key", "SELECT"]) {
+        assert.equal(text.includes(forbidden), false, `${code}: ${forbidden}`);
+      }
+    }
+    assert.equal(mapDbError({ code: "RL001" }, SAFE.createFailed).status, 429);
+  });
+});
+
+describe("source hygiene: no secrets in client code, no sensitive logging", () => {
+  const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const walk = (dir: string): string[] =>
+    readdirSync(dir).flatMap((n) => {
+      const p = join(dir, n);
+      if (["node_modules", ".next", ".git"].includes(n)) return [];
+      return statSync(p).isDirectory() ? walk(p) : [p];
+    });
+  const files = ["app", "components", "lib", "utils"]
+    .flatMap((d) => walk(join(root, d)))
+    .filter((f) => /\.(ts|tsx)$/.test(f));
+  const rel = (f: string) => f.slice(root.length + 1).replace(/\\/g, "/");
+
+  it("service-role key / payment secrets are referenced only from server modules", () => {
+    const allowed = ["utils/supabase/admin.ts", "app/api/", "lib/server/"];
+    for (const f of files) {
+      const src = readFileSync(f, "utf8");
+      if (/SERVICE_ROLE_KEY|RAZORPAY_KEY_SECRET|RAZORPAY_WEBHOOK_SECRET/.test(src)) {
+        assert.ok(allowed.some((a) => rel(f).startsWith(a)), `${rel(f)} references a server secret`);
+        assert.equal(/^["']use client["']/m.test(src), false, `${rel(f)} is a client component`);
+      }
+    }
+  });
+
+  it("no NEXT_PUBLIC_ variable holds a secret", () => {
+    for (const f of files) {
+      assert.equal(/NEXT_PUBLIC_[A-Z_]*(SECRET|SERVICE|PRIVATE|WEBHOOK)/.test(readFileSync(f, "utf8")), false, rel(f));
+    }
+  });
+
+  it("console logging never includes tokens, headers, bodies, paths or secrets", () => {
+    for (const f of files) {
+      const src = readFileSync(f, "utf8");
+      for (const m of src.matchAll(/console\.[a-z]+\(([^;]*)\)/g)) {
+        const code = m[1].replace(/"[^"]*"|`[^`]*`/g, "");
+        assert.equal(/(token|authorization|password|secret|cookie|headers|rawBody|body\b|storage_path|\.path\b|email|key)/i.test(code), false, `${rel(f)}: ${m[0]}`);
+      }
+    }
+  });
+});

@@ -4,27 +4,26 @@
  *
  * Two rules matter here:
  *  - you can't skip ahead to a step whose inputs don't exist yet, and
- *  - once an order is paid you can't drop back into the middle of it, which is
- *    what kept sending people from payment to review.
+ *  - once an order is placed you can't drop back into the middle of it (that
+ *    would invite placing the same order twice).
  */
 export type FlowStepId =
   | "shop"
   | "upload"
   | "options"
   | "review"
-  | "payment"
   | "track";
 
 export type FlowProgress = {
   hasShop: boolean;
   hasFile: boolean;
-  paid: boolean;
+  placed: boolean;
 };
 
-/** Steps that make up the middle of an order, between picking and paying. */
+/** Steps that make up the middle of an order, between picking and placing. */
 const midOrderSteps: FlowStepId[] = ["upload", "options", "review"];
 
-/** Whether a step's prerequisites exist, ignoring payment state. */
+/** Whether a step's prerequisites exist, ignoring whether it was placed. */
 export function canAccessStep(step: FlowStepId, progress: FlowProgress): boolean {
   switch (step) {
     case "shop":
@@ -33,10 +32,9 @@ export function canAccessStep(step: FlowStepId, progress: FlowProgress): boolean
       return progress.hasShop;
     case "options":
     case "review":
-    case "payment":
       return progress.hasShop && progress.hasFile;
     case "track":
-      return progress.paid;
+      return progress.placed;
     default:
       return false;
   }
@@ -45,9 +43,9 @@ export function canAccessStep(step: FlowStepId, progress: FlowProgress): boolean
 export type StepDisposition =
   /** Render the step. */
   | "open"
-  /** Paid order: go forward to the confirmation. */
-  | "forward-to-confirmation"
-  /** Paid order, back at step one: clear it and start a new order. */
+  /** Placed order: go forward to tracking. */
+  | "forward-to-tracking"
+  /** Placed order, back at step one: clear it and start a new order. */
   | "start-new-order"
   /** Prerequisites missing: go back to the start. */
   | "send-to-start";
@@ -57,9 +55,9 @@ export function stepDisposition(
   step: FlowStepId,
   progress: FlowProgress,
 ): StepDisposition {
-  if (progress.paid) {
+  if (progress.placed) {
     if (step === "shop") return "start-new-order";
-    if (midOrderSteps.includes(step)) return "forward-to-confirmation";
+    if (midOrderSteps.includes(step)) return "forward-to-tracking";
   }
 
   return canAccessStep(step, progress) ? "open" : "send-to-start";
