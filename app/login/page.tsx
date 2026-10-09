@@ -25,11 +25,11 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
           Sign in to print
         </h1>
         <p className="mt-1.5 text-[14px] text-muted-foreground">
-          We&apos;ll email you a one-time sign-in link. No password needed.
+          Continue with Google, or get a one-time sign-in link by email. No password needed.
         </p>
         {params.error ? (
           <p role="alert" className="mt-4 text-[13px] font-medium text-destructive">
-            That sign-in link is invalid or has expired. Request a new one.
+            Sign-in didn&apos;t complete, or the link has expired. Please try again.
           </p>
         ) : null}
         <LoginForm next={next} />
