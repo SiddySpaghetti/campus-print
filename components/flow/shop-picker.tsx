@@ -1,13 +1,23 @@
 "use client";
 
+import { useEffect } from "react";
+
 import { FlowShell } from "@/components/flow/flow-shell";
 import { useFlow } from "@/components/flow/flow-state";
 import { ShopOption } from "@/components/flow/shop-option";
 import { Reveal } from "@/components/shared/reveal";
 import type { FlowShop } from "@/lib/shops";
 
-export function ShopPicker({ shops }: { shops: FlowShop[] }) {
-  const { shop, selectShop } = useFlow();
+export function ShopPicker({ shops, initialShopId }: { shops: FlowShop[]; initialShopId?: string }) {
+  const { shop, selectShop, ready } = useFlow();
+
+  // Preselect the shop a landing-page "View Shop" link pointed at, once stored
+  // flow state has loaded (so it isn't overwritten). Closed/unknown ids are ignored.
+  useEffect(() => {
+    const target = shops.find((s) => s.id === initialShopId && s.isOpen);
+    if (ready && target) selectShop(target);
+  }, [ready, initialShopId, shops, selectShop]);
+
   // Only open shops take orders (create_order_verified enforces it too).
   const selected = shop && shops.some((s) => s.id === shop.id && s.isOpen) ? shop : null;
 

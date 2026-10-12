@@ -1,0 +1,14 @@
+-- Restore public.public_shops to the configuration in init_campusprint_schema.
+-- It was switched to security_invoker = on outside migrations (most likely via
+-- the Security Advisor's "Security Definer View" fix). Invoker mode makes the
+-- view check the caller's rights on public.shops, which anon has none of and
+-- students only see through RLS for their own shop, so the public listing
+-- returned "permission denied" (anon) or zero rows (students).
+--
+-- Owner rights are intentional here: the view's column list (no phone, no
+-- order_prefix, no is_verified/timestamps, no user ids) and its filter
+-- (verified, non-deleted shops; active, non-deleted prices) are the security
+-- boundary. anon/authenticated hold SELECT only on the view and no grants on
+-- the underlying tables. The Security Advisor will flag this view again;
+-- that finding is expected for this deliberate public projection.
+alter view public.public_shops set (security_invoker = false);

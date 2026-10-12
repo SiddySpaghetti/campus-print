@@ -1,10 +1,7 @@
 /**
- * MOCK DATA — illustrative print shops used by the "Find your print shop"
- * section. Not real shops, prices, or availability.
- *
- * Shaped to match a future `print_shops` table: identifiers and raw numbers
- * (metres, rupees, minutes) are stored, and all formatting happens in the UI,
- * so swapping this module for a Supabase query needs no component changes.
+ * Display shape of a listed print shop, filled from the public_shops view by
+ * `lib/shops.ts`. Raw numbers (metres, rupees, minutes) are stored and all
+ * formatting happens in the UI.
  */
 export type PrintShop = {
   id: string;
@@ -21,53 +18,6 @@ export type PrintShop = {
   prepMinutes: number;
   services: string[];
 };
-
-export const printShops: PrintShop[] = [
-  {
-    id: "abc-xerox",
-    name: "ABC Xerox",
-    isVerified: true,
-    isOpen: true,
-    distanceMetres: 150,
-    bwFromInr: 2,
-    colourFromInr: 10,
-    prepMinutes: 10,
-    services: ["Printing", "Photocopy", "Scanning"],
-  },
-  {
-    id: "campus-print-hub",
-    name: "Campus Print Hub",
-    isVerified: true,
-    isOpen: true,
-    distanceMetres: 300,
-    bwFromInr: 1.5,
-    colourFromInr: 8,
-    prepMinutes: 15,
-    services: ["Printing", "Photocopy", "Scanning", "Lamination"],
-  },
-  {
-    id: "student-copy-center",
-    name: "Student Copy Center",
-    isVerified: true,
-    isOpen: true,
-    distanceMetres: 500,
-    bwFromInr: 2,
-    colourFromInr: 9,
-    prepMinutes: 12,
-    services: ["Printing", "Photocopy", "Binding"],
-  },
-  {
-    id: "quickprint",
-    name: "QuickPrint",
-    isVerified: true,
-    isOpen: false,
-    distanceMetres: 650,
-    bwFromInr: 1.5,
-    colourFromInr: 8,
-    prepMinutes: 20,
-    services: ["Printing", "Photocopy", "Scanning"],
-  },
-];
 
 /**
  * Per-page prices keep their paise (₹1.50), unlike order totals — so this is
