@@ -9,9 +9,16 @@ import { type NextRequest, NextResponse } from "next/server";
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
 
+  // Same checks as utils/supabase/server.ts: name the missing var instead of
+  // letting undefined reach @supabase/ssr's generic "URL and Key are required".
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL.");
+  if (!key) throw new Error("Missing NEXT_PUBLIC_SUPABASE_ANON_KEY.");
+
   const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    url,
+    key,
     {
       cookies: {
         getAll() {
