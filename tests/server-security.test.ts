@@ -13,7 +13,12 @@ import { PDFDocument } from "pdf-lib";
 
 import { SAFE, mapDbError } from "../lib/server/errors";
 import { FileRejected, inspectFile, sniffMime } from "../lib/server/file-inspect";
-import { parsePaymentEvent, verifyWebhookSignature } from "../lib/server/razorpay";
+import {
+  onlinePaymentAllowed,
+  parsePaymentEvent,
+  verifyCheckoutSignature,
+  verifyWebhookSignature,
+} from "../lib/server/razorpay";
 import {
   ValidationError,
   isOwnedStoragePath,
@@ -225,6 +230,47 @@ describe("webhook signature", () => {
     })!;
     assert.deepEqual(e.payload, { event: "payment.captured", order_id: "order_1", payment_id: "pay_1", amount: 500, currency: "INR" });
     assert.equal(JSON.stringify(e.payload).includes("a@b.c"), false);
+  });
+});
+
+describe("online payment is Sitaram-only", () => {
+  const SITARAM = "6f1c2a8e-1b2c-4d3e-8f90-123456789abc";
+  const OTHER = "0a9b8c7d-6e5f-4a3b-9c2d-1e0f9a8b7c6d";
+  const env = { RAZORPAY_ENABLED_SHOP_ID: SITARAM, RAZORPAY_KEY_ID: "rzp_test_x", RAZORPAY_KEY_SECRET: "s" };
+
+  it("allows only the configured shop with its flag on and keys set", () => {
+    assert.equal(onlinePaymentAllowed(SITARAM, true, env), true);
+    assert.equal(onlinePaymentAllowed(SITARAM, true, { ...env, RAZORPAY_ENABLED_SHOP_ID: ` ${SITARAM.toUpperCase()} ` }), true);
+  });
+
+  it("fails closed on any other shop, flag, or missing config", () => {
+    assert.equal(onlinePaymentAllowed(OTHER, true, env), false);
+    assert.equal(onlinePaymentAllowed(SITARAM, false, env), false);
+    assert.equal(onlinePaymentAllowed(SITARAM, undefined, env), false); // shop row / column missing
+    assert.equal(onlinePaymentAllowed(SITARAM, "true", env), false);
+    assert.equal(onlinePaymentAllowed(SITARAM, true, { ...env, RAZORPAY_ENABLED_SHOP_ID: undefined }), false);
+    assert.equal(onlinePaymentAllowed(SITARAM, true, { ...env, RAZORPAY_ENABLED_SHOP_ID: "Sitaram Prints" }), false);
+    assert.equal(onlinePaymentAllowed(SITARAM, true, { ...env, RAZORPAY_KEY_SECRET: undefined }), false);
+    assert.equal(onlinePaymentAllowed(SITARAM, true, { ...env, RAZORPAY_KEY_ID: "" }), false);
+  });
+});
+
+describe("checkout signature", () => {
+  const secret = "test-key-secret-not-real";
+  const sign = (msg: string, s = secret) => createHmac("sha256", s).update(msg).digest("hex");
+  const good = sign("order_ABC123|pay_XYZ789");
+
+  it("accepts HMAC(stored order id|payment id)", () => {
+    assert.equal(verifyCheckoutSignature("order_ABC123", "pay_XYZ789", good, secret), true);
+  });
+
+  it("rejects another order, another payment, wrong secret and junk", () => {
+    assert.equal(verifyCheckoutSignature("order_OTHER1", "pay_XYZ789", good, secret), false);
+    assert.equal(verifyCheckoutSignature("order_ABC123", "pay_OTHER1", good, secret), false);
+    assert.equal(verifyCheckoutSignature("order_ABC123", "pay_XYZ789", sign("order_ABC123|pay_XYZ789", "x"), secret), false);
+    assert.equal(verifyCheckoutSignature("order_ABC123", "pay_XYZ789", null, secret), false);
+    assert.equal(verifyCheckoutSignature("order_ABC123", "pay_XYZ789", "zz".repeat(32), secret), false);
+    assert.equal(verifyCheckoutSignature("order_ABC123", "pay_XYZ789", good, ""), false);
   });
 });
 

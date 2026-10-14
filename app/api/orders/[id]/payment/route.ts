@@ -1,6 +1,7 @@
 import { requireRole } from "@/lib/server/auth";
 import { errorResponse, handle, logServerError, mapDbError, SAFE } from "@/lib/server/errors";
 import { rateLimit } from "@/lib/server/rate-limit";
+import { shopAllowsOnlinePayment } from "@/lib/server/razorpay";
 import { parseUuidParam } from "@/lib/server/validate";
 import { createAdminClient } from "@/utils/supabase/admin";
 
@@ -11,12 +12,16 @@ import { createAdminClient } from "@/utils/supabase/admin";
  *   RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET
  * Until they are configured this route answers 503 and creates nothing.
  *
+ * Only the RAZORPAY_ENABLED_SHOP_ID shop (Sitaram Prints, whose merchant account
+ * the keys belong to) can be paid here. Any other shop's order is refused, even
+ * a hand-crafted request, so no other shop's money lands in that account.
+ *
  * The amount is NEVER taken from the request: it is `orders.total_paise`, read
  * from the database after confirming the order is the caller's own, PENDING and
  * unpaid. The browser cannot influence amount, currency or order.
  *
- * PAID is never set here. Only the signature-verified webhook marks an order
- * paid; the browser's "payment succeeded" callback is just a hint to refresh.
+ * PAID is never set here. Only process_payment_event does, called by the
+ * signature-verified webhook or by /payment/verify after its own checks.
  */
 export function POST(_request: Request, ctx: RouteContext<"/api/orders/[id]/payment">) {
   return handle("api/orders/payment", async () => {
@@ -36,13 +41,15 @@ export function POST(_request: Request, ctx: RouteContext<"/api/orders/[id]/paym
     // Read through RLS as the user: only their own order can come back.
     const { data: order, error } = await supabase
       .from("orders")
-      .select("id, status, payment_method, payment_status, total_paise, payment_order_id")
+      .select("id, shop_id, status, payment_method, payment_status, total_paise, payment_order_id")
       .eq("id", orderId)
       .maybeSingle();
     if (error || !order) return errorResponse(SAFE.payFailed);
     if (order.payment_method !== "ONLINE" || order.status !== "PENDING" || !["PENDING", "FAILED"].includes(order.payment_status)) {
       return errorResponse(SAFE.payFailed);
     }
+    const admin = createAdminClient();
+    if (!(await shopAllowsOnlinePayment(admin, order.shop_id))) return errorResponse(SAFE.forbidden);
 
     // Already created (double click / retry): hand back the same gateway order.
     if (order.payment_order_id) {
@@ -61,7 +68,12 @@ export function POST(_request: Request, ctx: RouteContext<"/api/orders/[id]/paym
         Authorization: `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}`,
       },
       // Amount, currency and receipt all come from OUR database row.
-      body: JSON.stringify({ amount: order.total_paise, currency: "INR", receipt: order.id }),
+      body: JSON.stringify({
+        amount: order.total_paise,
+        currency: "INR",
+        receipt: order.id,
+        notes: { campusprint_order_id: order.id, shop_id: order.shop_id },
+      }),
       signal: AbortSignal.timeout(10_000),
     }).catch((e) => {
       logServerError("api/orders/payment:gateway", e);
@@ -81,7 +93,6 @@ export function POST(_request: Request, ctx: RouteContext<"/api/orders/[id]/paym
       return errorResponse(SAFE.payFailed);
     }
 
-    const admin = createAdminClient();
     const { data: attached, error: attachError } = await admin.rpc("attach_payment_order", {
       p_order_id: order.id,
       p_user_id: user.id,

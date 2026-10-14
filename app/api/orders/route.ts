@@ -2,6 +2,7 @@ import { requireRole } from "@/lib/server/auth";
 import { errorResponse, handle, logServerError, mapDbError, readJson, SAFE } from "@/lib/server/errors";
 import { FileRejected, inspectFile } from "@/lib/server/file-inspect";
 import { rateLimit } from "@/lib/server/rate-limit";
+import { shopAllowsOnlinePayment } from "@/lib/server/razorpay";
 import { MAX_FILE_BYTES, parseCreateOrder } from "@/lib/server/validate";
 import { createAdminClient } from "@/utils/supabase/admin";
 
@@ -15,10 +16,10 @@ import { createAdminClient } from "@/utils/supabase/admin";
  * Here the server: authenticates the student, downloads each file from private
  * Storage, checks the real bytes (magic bytes, size, extension, page count with
  * a real PDF parser) and only then calls create_order_verified, which prices
- * the order from the database's shop_pricing (as PAY_AT_COUNTER until online
- * payment is live). That function is executable by
- * the service role only, so there is no way to reach it with a made-up page
- * count.
+ * the order from the database's shop_pricing (ONLINE only for the shop that
+ * passes shopAllowsOnlinePayment, otherwise PAY_AT_COUNTER). That function is
+ * executable by the service role only, so there is no way to reach it with a
+ * made-up page count.
  */
 export function POST(request: Request) {
   return handle("api/orders", async () => {
@@ -30,6 +31,10 @@ export function POST(request: Request) {
 
     const input = parseCreateOrder(await readJson(request), user.id);
     const admin = createAdminClient();
+
+    // Decided here, never by the browser: ONLINE only for the configured
+    // RAZORPAY_ENABLED_SHOP_ID with online_payment on. Everyone else: counter.
+    const online = await shopAllowsOnlinePayment(admin, input.shopId);
 
     const files = [];
     for (const f of input.files) {
@@ -56,9 +61,9 @@ export function POST(request: Request) {
       p_copies: input.copies,
       p_files: files,
       p_student_note: input.note,
-      // Razorpay isn't live: every order is paid in person at pickup. The order
-      // stays unpaid; nothing here (or anywhere in the browser) can mark it PAID.
-      p_payment_method: "PAY_AT_COUNTER",
+      // Either way nothing here (or in the browser) can mark the order PAID:
+      // only process_payment_event does, after server-side verification.
+      p_payment_method: online ? "ONLINE" : "PAY_AT_COUNTER",
     });
     if (error || !data) {
       logServerError("api/orders:create", error);

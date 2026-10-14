@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { AutoRefresh, CancelOrderButton } from "@/components/flow/order-actions";
+import { AutoRefresh, CancelOrderButton, PayNowButton } from "@/components/flow/order-actions";
 import { OrderTracker, type OrderStatus } from "@/components/flow/order-tracker";
 import { Container } from "@/components/shared/section";
 import { SectionHeading } from "@/components/shared/section-heading";
@@ -17,6 +17,7 @@ import {
   type SideMode,
 } from "@/lib/pricing";
 import { requireStudentPage } from "@/lib/server/auth";
+import { onlinePaymentAllowed } from "@/lib/server/razorpay";
 import { isUuid } from "@/lib/server/validate";
 
 type OrderRow = {
@@ -122,6 +123,10 @@ export default async function TrackPage({ searchParams }: PageProps<"/start-prin
             </span>
           </div>
 
+          {/* Only the configured Razorpay shop; the payment route re-checks its online_payment flag. */}
+          {unpaid && !atCounter && order.status === "PENDING" && onlinePaymentAllowed(order.shop_id, true) ? (
+            <PayNowButton orderId={order.id} label={label} />
+          ) : null}
           {canStudentCancel(order) ? <CancelOrderButton orderId={order.id} /> : null}
         </div>
 

@@ -4,7 +4,8 @@ import { parsePaymentEvent, verifyWebhookSignature } from "@/lib/server/razorpay
 import { createAdminClient } from "@/utils/supabase/admin";
 
 /**
- * Razorpay webhook — the ONLY thing that can mark an order PAID.
+ * Razorpay webhook — the authoritative way an order becomes PAID (the checkout
+ * verify route is a faster path into the same process_payment_event).
  *
  * Required environment (server only): RAZORPAY_WEBHOOK_SECRET.
  *

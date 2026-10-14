@@ -26,8 +26,8 @@ export default function ReviewPage() {
     return () => clearTimeout(timer);
   }, []);
 
-  // The order is created as PAY_AT_COUNTER: it stays unpaid and the student
-  // pays the shop in person at pickup. Online payment replaces this later.
+  // The server picks the payment method: ONLINE shops are paid on the track
+  // page (Pay now), the rest are PAY_AT_COUNTER and paid in person at pickup.
   const placeOrder = async () => {
     if (!shop || !file || placing) return;
     setPlacing(true);
