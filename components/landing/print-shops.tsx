@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { unstable_rethrow } from "next/navigation";
 
 import { PrintShopCard } from "@/components/print/print-shop-card";
 import { Reveal } from "@/components/shared/reveal";
@@ -42,6 +43,8 @@ async function ShopList() {
   try {
     shops = await getPublicShops();
   } catch (error) {
+    // Let Next's own control-flow errors (dynamic rendering, redirects) through.
+    unstable_rethrow(error);
     console.error("Failed to load public shops", error);
     return <Notice>We couldn&rsquo;t load print shops right now. Please refresh to try again.</Notice>;
   }
