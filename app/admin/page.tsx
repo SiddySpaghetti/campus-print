@@ -19,7 +19,7 @@ type AdminOrder = {
 type AdminShop = { id: string; name: string; is_verified: boolean; is_open: boolean; prep_minutes: number; deleted_at: string | null };
 type AdminProfile = { id: string; role: string; full_name: string | null; shop_id: string | null; created_at: string; deleted_at: string | null };
 
-export const metadata = { title: "Admin · CampusPrint" };
+export const metadata = { title: "Admin" };
 
 const th = "px-3 py-2 text-left font-mono text-[11px] font-medium uppercase tracking-[0.1em] text-muted-foreground";
 const td = "px-3 py-2 text-[13px] text-ink";

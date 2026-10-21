@@ -43,3 +43,6 @@ next-env.d.ts
 
 # local MCP config (contains API keys)
 .mcp.json
+
+# Supabase CLI local state
+supabase/.temp/

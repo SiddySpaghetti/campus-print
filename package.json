@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:security": "npx --yes tsx --test tests/server-security.test.ts tests/webhook-route.test.ts tests/flow.test.ts"
+    "test:security": "npx --yes tsx --test tests/server-security.test.ts tests/webhook-route.test.ts tests/flow.test.ts tests/shop-dashboard.test.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",

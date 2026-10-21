@@ -19,7 +19,10 @@ const bricolage = Bricolage_Grotesque({
 });
 
 export const metadata: Metadata = {
-  title: "CampusPrint — Print. Pay. Pick up. No queue.",
+  title: {
+    default: "CampusPrint — Print. Pay. Pick up. No queue.",
+    template: "%s · CampusPrint",
+  },
   description:
     "Upload your documents, choose your print settings, pay online, and pick them up from a campus print shop when they're ready.",
 };
