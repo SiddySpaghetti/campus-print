@@ -15,6 +15,8 @@ import { SAFE, mapDbError } from "../lib/server/errors";
 import { FileRejected, inspectFile, sniffMime } from "../lib/server/file-inspect";
 import {
   onlinePaymentAllowed,
+  razorpayAccount,
+  razorpayAccounts,
   parsePaymentEvent,
   verifyCheckoutSignature,
   verifyWebhookSignature,
@@ -252,6 +254,38 @@ describe("online payment is Sitaram-only", () => {
     assert.equal(onlinePaymentAllowed(SITARAM, true, { ...env, RAZORPAY_ENABLED_SHOP_ID: "Sitaram Prints" }), false);
     assert.equal(onlinePaymentAllowed(SITARAM, true, { ...env, RAZORPAY_KEY_SECRET: undefined }), false);
     assert.equal(onlinePaymentAllowed(SITARAM, true, { ...env, RAZORPAY_KEY_ID: "" }), false);
+  });
+});
+
+describe("each online shop uses its own Razorpay account", () => {
+  const SITARAM = "6f1c2a8e-1b2c-4d3e-8f90-123456789abc";
+  const K2 = "5497dc7f-b7ee-4f2b-b98f-5f68cbe31eb0";
+  const OTHER = "0a9b8c7d-6e5f-4a3b-9c2d-1e0f9a8b7c6d";
+  const env = {
+    RAZORPAY_ENABLED_SHOP_ID: SITARAM,
+    RAZORPAY_KEY_ID: "rzp_test_sitaram",
+    RAZORPAY_KEY_SECRET: "sitaram-secret",
+    RAZORPAY_WEBHOOK_SECRET: "sitaram-hook",
+    RAZORPAY_ENABLED_SHOP_ID_1: K2,
+    RAZORPAY_KEY_ID_1: "rzp_test_k2",
+    RAZORPAY_KEY_SECRET_1: "k2-secret",
+  };
+
+  it("hands each shop only its own keys", () => {
+    assert.deepEqual(razorpayAccount(SITARAM, env), {
+      shopId: SITARAM, keyId: "rzp_test_sitaram", keySecret: "sitaram-secret", webhookSecret: "sitaram-hook",
+    });
+    assert.deepEqual(razorpayAccount(K2, env), { shopId: K2, keyId: "rzp_test_k2", keySecret: "k2-secret", webhookSecret: null });
+    assert.equal(razorpayAccount(OTHER, env), null);
+    assert.equal(onlinePaymentAllowed(K2, true, env), true);
+    assert.equal(onlinePaymentAllowed(OTHER, true, env), false);
+  });
+
+  it("fails closed on an incomplete set or two sets for one shop", () => {
+    assert.equal(razorpayAccount(K2, { ...env, RAZORPAY_KEY_SECRET_1: undefined }), null);
+    assert.equal(razorpayAccount(K2, { ...env, RAZORPAY_ENABLED_SHOP_ID_1: "K2 Print Store" }), null);
+    assert.equal(razorpayAccount(SITARAM, { ...env, RAZORPAY_ENABLED_SHOP_ID_1: SITARAM }), null);
+    assert.equal(razorpayAccounts({ ...env, RAZORPAY_ENABLED_SHOP_ID_1: undefined }).length, 1);
   });
 });
 

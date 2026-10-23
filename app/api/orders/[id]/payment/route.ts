@@ -1,20 +1,19 @@
 import { requireRole } from "@/lib/server/auth";
 import { errorResponse, handle, logServerError, mapDbError, SAFE } from "@/lib/server/errors";
 import { rateLimit } from "@/lib/server/rate-limit";
-import { shopAllowsOnlinePayment } from "@/lib/server/razorpay";
+import { razorpayAccount, razorpayAccounts, shopAllowsOnlinePayment } from "@/lib/server/razorpay";
 import { parseUuidParam } from "@/lib/server/validate";
 import { createAdminClient } from "@/utils/supabase/admin";
 
 /**
  * Start a Razorpay payment for the signed-in student's own order.
  *
- * Required environment (server only; names only here, never values):
- *   RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET
- * Until they are configured this route answers 503 and creates nothing.
+ * Required environment (server only): one Razorpay account per online shop,
+ * see lib/server/razorpay.ts. With none configured this route answers 503.
  *
- * Only the RAZORPAY_ENABLED_SHOP_ID shop (Sitaram Prints, whose merchant account
- * the keys belong to) can be paid here. Any other shop's order is refused, even
- * a hand-crafted request, so no other shop's money lands in that account.
+ * The gateway order is created with the ORDER'S OWN SHOP's keys, so the money
+ * lands in that shop's account. A shop without its own account is refused,
+ * even for a hand-crafted request.
  *
  * The amount is NEVER taken from the request: it is `orders.total_paise`, read
  * from the database after confirming the order is the caller's own, PENDING and
@@ -28,9 +27,7 @@ export function POST(_request: Request, ctx: RouteContext<"/api/orders/[id]/paym
     const { supabase, user } = await requireRole("student");
     const orderId = parseUuidParam((await ctx.params).id);
 
-    const keyId = process.env.RAZORPAY_KEY_ID;
-    const keySecret = process.env.RAZORPAY_KEY_SECRET;
-    if (!keyId || !keySecret) {
+    if (razorpayAccounts().length === 0) {
       logServerError("api/orders/payment", new Error("Razorpay credentials are not configured"));
       return errorResponse(SAFE.notConfigured);
     }
@@ -49,7 +46,9 @@ export function POST(_request: Request, ctx: RouteContext<"/api/orders/[id]/paym
       return errorResponse(SAFE.payFailed);
     }
     const admin = createAdminClient();
-    if (!(await shopAllowsOnlinePayment(admin, order.shop_id))) return errorResponse(SAFE.forbidden);
+    const account = razorpayAccount(order.shop_id);
+    if (!account || !(await shopAllowsOnlinePayment(admin, order.shop_id))) return errorResponse(SAFE.forbidden);
+    const { keyId, keySecret } = account;
 
     // Already created (double click / retry): hand back the same gateway order.
     if (order.payment_order_id) {

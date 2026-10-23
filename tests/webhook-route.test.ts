@@ -33,21 +33,28 @@ const noLeak = (text: string) => {
 };
 
 describe("razorpay webhook route", () => {
+  const KEYS = [
+    "RAZORPAY_ENABLED_SHOP_ID",
+    "RAZORPAY_KEY_ID",
+    "RAZORPAY_KEY_SECRET",
+    "RAZORPAY_WEBHOOK_SECRET",
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "NEXT_PUBLIC_SUPABASE_URL",
+  ];
   let saved: Record<string, string | undefined>;
   beforeEach(() => {
-    saved = {
-      s: process.env.RAZORPAY_WEBHOOK_SECRET,
-      k: process.env.SUPABASE_SERVICE_ROLE_KEY,
-      u: process.env.NEXT_PUBLIC_SUPABASE_URL,
-    };
+    saved = Object.fromEntries(KEYS.map((k) => [k, process.env[k]]));
+    process.env.RAZORPAY_ENABLED_SHOP_ID = "6f1c2a8e-1b2c-4d3e-8f90-123456789abc";
+    process.env.RAZORPAY_KEY_ID = "rzp_test_x";
+    process.env.RAZORPAY_KEY_SECRET = "s";
     process.env.RAZORPAY_WEBHOOK_SECRET = SECRET;
     delete process.env.SUPABASE_SERVICE_ROLE_KEY; // never touch a real database in unit tests
     process.env.NEXT_PUBLIC_SUPABASE_URL = "http://127.0.0.1:1";
   });
   afterEach(() => {
-    for (const [k, v] of [["RAZORPAY_WEBHOOK_SECRET", saved.s], ["SUPABASE_SERVICE_ROLE_KEY", saved.k], ["NEXT_PUBLIC_SUPABASE_URL", saved.u]] as const) {
-      if (v === undefined) delete process.env[k];
-      else process.env[k] = v;
+    for (const k of KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
     }
   });
 

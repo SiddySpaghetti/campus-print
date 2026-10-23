@@ -32,8 +32,8 @@ export function POST(request: Request) {
     const input = parseCreateOrder(await readJson(request), user.id);
     const admin = createAdminClient();
 
-    // Decided here, never by the browser: ONLINE only for the configured
-    // RAZORPAY_ENABLED_SHOP_ID with online_payment on. Everyone else: counter.
+    // Decided here, never by the browser: ONLINE only for a shop with its own
+    // configured Razorpay account and online_payment on. Everyone else: counter.
     const online = await shopAllowsOnlinePayment(admin, input.shopId);
 
     const files = [];

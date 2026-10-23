@@ -1,7 +1,7 @@
 import { requireRole } from "@/lib/server/auth";
 import { errorResponse, handle, logServerError, readJson, SAFE } from "@/lib/server/errors";
 import { rateLimit } from "@/lib/server/rate-limit";
-import { shopAllowsOnlinePayment, verifyCheckoutSignature } from "@/lib/server/razorpay";
+import { razorpayAccount, razorpayAccounts, shopAllowsOnlinePayment, verifyCheckoutSignature } from "@/lib/server/razorpay";
 import { parseUuidParam } from "@/lib/server/validate";
 import { createAdminClient } from "@/utils/supabase/admin";
 
@@ -28,9 +28,7 @@ export function POST(request: Request, ctx: RouteContext<"/api/orders/[id]/payme
     const { supabase, user } = await requireRole("student");
     const orderId = parseUuidParam((await ctx.params).id);
 
-    const keyId = process.env.RAZORPAY_KEY_ID;
-    const keySecret = process.env.RAZORPAY_KEY_SECRET;
-    if (!keyId || !keySecret) return errorResponse(SAFE.notConfigured);
+    if (razorpayAccounts().length === 0) return errorResponse(SAFE.notConfigured);
 
     const limited = await rateLimit(`pay_verify:${user.id}`, 20, 600);
     if (limited) return limited;
@@ -54,7 +52,10 @@ export function POST(request: Request, ctx: RouteContext<"/api/orders/[id]/payme
     if (order.payment_status === "PAID") return Response.json({ status: "paid" });
 
     const admin = createAdminClient();
-    if (!(await shopAllowsOnlinePayment(admin, order.shop_id))) return errorResponse(SAFE.forbidden);
+    // The order's own shop's keys: signature and payment fetch both use them.
+    const account = razorpayAccount(order.shop_id);
+    if (!account || !(await shopAllowsOnlinePayment(admin, order.shop_id))) return errorResponse(SAFE.forbidden);
+    const { keyId, keySecret } = account;
 
     if (!verifyCheckoutSignature(order.payment_order_id, paymentId, signature, keySecret)) {
       return errorResponse(SAFE.badRequest);

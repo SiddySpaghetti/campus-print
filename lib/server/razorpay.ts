@@ -2,12 +2,18 @@
  * Razorpay helpers. Server-only: every credential comes from environment
  * variables and is never sent to the browser.
  *
- *   RAZORPAY_KEY_ID           public identifier (returned to checkout; not secret)
- *   RAZORPAY_KEY_SECRET       secret — server only
- *   RAZORPAY_WEBHOOK_SECRET   secret — server only, set in the Razorpay dashboard
- *   RAZORPAY_ENABLED_SHOP_ID  UUID of the ONE shop whose merchant account these
- *                             keys belong to (Sitaram Prints). Every other shop
- *                             is pay-at-counter only.
+ * Each online shop has its OWN merchant account, so its money goes straight to
+ * that shop. One set of variables per shop:
+ *
+ *   RAZORPAY_ENABLED_SHOP_ID        UUID of the shop these keys belong to
+ *   RAZORPAY_KEY_ID                 public identifier (returned to checkout)
+ *   RAZORPAY_KEY_SECRET             secret — server only
+ *   RAZORPAY_WEBHOOK_SECRET         secret — server only, from that account's dashboard
+ *
+ * That unsuffixed set is the first shop (Sitaram Prints). Every further shop
+ * repeats all four with the same suffix: RAZORPAY_ENABLED_SHOP_ID_1,
+ * RAZORPAY_KEY_ID_1, ... (K2 Print Store), then _2, and so on.
+ * A shop with no set is pay-at-counter only.
  */
 import { createHmac, timingSafeEqual } from "node:crypto";
 
@@ -47,24 +53,42 @@ export function verifyCheckoutSignature(
   return hmacMatches(`${storedOrderId}|${paymentId}`, signature, secret);
 }
 
+type Env = Record<string, string | undefined>;
+
+export type RazorpayAccount = { shopId: string; keyId: string; keySecret: string; webhookSecret: string | null };
+
+/** Every fully configured merchant account (shop id + key id + key secret). */
+export function razorpayAccounts(env: Env = process.env): RazorpayAccount[] {
+  const suffixes = [""];
+  for (const name of Object.keys(env)) {
+    const n = /^RAZORPAY_ENABLED_SHOP_ID(_[A-Z0-9]+)$/.exec(name)?.[1];
+    if (n) suffixes.push(n);
+  }
+  return suffixes.flatMap((s) => {
+    const shopId = env[`RAZORPAY_ENABLED_SHOP_ID${s}`]?.trim().toLowerCase();
+    const keyId = env[`RAZORPAY_KEY_ID${s}`];
+    const keySecret = env[`RAZORPAY_KEY_SECRET${s}`];
+    if (!isUuid(shopId) || !keyId || !keySecret) return [];
+    return [{ shopId, keyId, keySecret, webhookSecret: env[`RAZORPAY_WEBHOOK_SECRET${s}`] || null }];
+  });
+}
+
 /**
- * The single online-payment gate. True only when Razorpay is configured, the
- * shop IS the configured RAZORPAY_ENABLED_SHOP_ID, and its online_payment flag
- * is true. Anything missing or mismatched means pay-at-counter.
+ * The shop's own account, or null. Two sets naming the same shop are a
+ * misconfiguration, so that shop gets none (fail closed, never a guess).
  */
-export function onlinePaymentAllowed(
-  shopId: string,
-  onlinePaymentFlag: unknown,
-  env: Record<string, string | undefined> = process.env,
-): boolean {
-  const enabledShopId = env.RAZORPAY_ENABLED_SHOP_ID?.trim().toLowerCase();
-  return (
-    isUuid(enabledShopId) &&
-    shopId === enabledShopId &&
-    onlinePaymentFlag === true &&
-    !!env.RAZORPAY_KEY_ID &&
-    !!env.RAZORPAY_KEY_SECRET
-  );
+export function razorpayAccount(shopId: string, env: Env = process.env): RazorpayAccount | null {
+  const matches = razorpayAccounts(env).filter((a) => a.shopId === shopId);
+  return matches.length === 1 ? matches[0] : null;
+}
+
+/**
+ * The single online-payment gate. True only when the shop has its own
+ * configured account and its online_payment flag is true. Anything missing or
+ * mismatched means pay-at-counter.
+ */
+export function onlinePaymentAllowed(shopId: string, onlinePaymentFlag: unknown, env: Env = process.env): boolean {
+  return onlinePaymentFlag === true && razorpayAccount(shopId, env) !== null;
 }
 
 /**

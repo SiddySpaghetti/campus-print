@@ -1,18 +1,22 @@
 import { errorResponse, handle, logServerError, SAFE } from "@/lib/server/errors";
 import { clientKey, rateLimit } from "@/lib/server/rate-limit";
-import { parsePaymentEvent, verifyWebhookSignature } from "@/lib/server/razorpay";
+import { parsePaymentEvent, razorpayAccounts, verifyWebhookSignature } from "@/lib/server/razorpay";
 import { createAdminClient } from "@/utils/supabase/admin";
 
 /**
  * Razorpay webhook — the authoritative way an order becomes PAID (the checkout
  * verify route is a faster path into the same process_payment_event).
  *
- * Required environment (server only): RAZORPAY_WEBHOOK_SECRET.
+ * Required environment (server only): each shop account's WEBHOOK_SECRET (see
+ * lib/server/razorpay.ts). Every shop's Razorpay dashboard points here.
  *
  *  1. Read the RAW body (the signature is over exact bytes, so no re-serialising).
- *  2. Verify X-Razorpay-Signature (HMAC-SHA256, constant-time). Bad signature ->
- *     400 and nothing else happens. Only FAILED attempts count against a per-IP
- *     limit, so genuine Razorpay traffic is never throttled.
+ *  2. Verify X-Razorpay-Signature (HMAC-SHA256, constant-time) against each
+ *     account's secret. Bad signature -> 400 and nothing else happens. Only
+ *     FAILED attempts count against a per-IP limit, so genuine Razorpay traffic
+ *     is never throttled.
+ *     The event's order must belong to the shop whose secret signed it: one
+ *     shop's secret can never change another shop's order.
  *  3. Hand the event to process_payment_event, which in one transaction records
  *     it (unique provider+event id => replays are no-ops), checks currency and
  *     amount against OUR stored total, and applies only legal state changes.
@@ -22,9 +26,9 @@ import { createAdminClient } from "@/utils/supabase/admin";
  */
 export function POST(request: Request) {
   return handle("api/webhook/razorpay", async () => {
-    const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
-    if (!secret) {
-      logServerError("api/webhook/razorpay", new Error("RAZORPAY_WEBHOOK_SECRET is not configured"));
+    const accounts = razorpayAccounts().filter((a) => a.webhookSecret);
+    if (accounts.length === 0) {
+      logServerError("api/webhook/razorpay", new Error("no Razorpay webhook secret is configured"));
       return errorResponse(SAFE.notConfigured);
     }
 
@@ -32,7 +36,8 @@ export function POST(request: Request) {
     if (rawBody.length > 100_000) return errorResponse(SAFE.badRequest);
 
     const signature = request.headers.get("x-razorpay-signature");
-    if (!verifyWebhookSignature(rawBody, signature, secret)) {
+    const account = accounts.find((a) => verifyWebhookSignature(rawBody, signature, a.webhookSecret!));
+    if (!account) {
       // The limiter is only abuse mitigation on this path, not a security gate:
       // if it is unavailable the answer is still a plain 400.
       const limited = await rateLimit(`webhook_bad_sig:${clientKey(request)}`, 30, 600);
@@ -52,6 +57,28 @@ export function POST(request: Request) {
     if (!event) return errorResponse(SAFE.badRequest);
 
     const admin = createAdminClient();
+
+    // Same lookup process_payment_event uses. An order of another shop means
+    // this account's secret is being used against it: refuse, change nothing.
+    const [column, value] = event.paymentOrderId
+      ? ["payment_order_id", event.paymentOrderId]
+      : ["payment_id", event.paymentId];
+    if (value) {
+      const { data: owner, error: ownerError } = await admin
+        .from("orders")
+        .select("shop_id")
+        .eq(column, value)
+        .maybeSingle();
+      if (ownerError) {
+        logServerError("api/webhook/razorpay:owner", ownerError);
+        return errorResponse(SAFE.internal);
+      }
+      if (owner && owner.shop_id !== account.shopId) {
+        logServerError("api/webhook/razorpay", new Error("event signed by another shop's account"));
+        return errorResponse(SAFE.badRequest);
+      }
+    }
+
     const { data, error } = await admin.rpc("process_payment_event", {
       p_provider: "razorpay",
       p_event_id: eventId,
