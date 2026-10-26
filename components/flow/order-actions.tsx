@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
@@ -17,14 +17,20 @@ export function AutoRefresh() {
   return null;
 }
 
-/** Cancels the student's own unpaid PENDING order (cancel_order decides). */
-export function CancelOrderButton({ orderId }: { orderId: string }) {
+/**
+ * Cancels the student's own PENDING order (cancel_order decides). A paid one
+ * is not refunded automatically, so the student is told before confirming.
+ */
+export function CancelOrderButton({ orderId, paid = false }: { orderId: string; paid?: boolean }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const cancel = async () => {
-    if (!window.confirm("Cancel this order?")) return;
+    const message = paid
+      ? "Cancel this paid order? It is not refunded automatically. To request a refund, contact the shop."
+      : "Cancel this order?";
+    if (!window.confirm(message)) return;
     setPending(true);
     setError(null);
     try {
@@ -135,37 +141,112 @@ export function PayNowButton({ orderId, label }: { orderId: string; label: strin
   );
 }
 
-type ShopTarget = "ACCEPTED" | "PRINTING" | "READY" | "COMPLETED" | "REJECTED" | "CANCELLED";
-
-/** The shop's next moves for each active status (the server re-validates every one). */
-const shopActions: Record<string, { target: ShopTarget; label: string; danger?: boolean }[]> = {
-  PENDING: [
-    { target: "ACCEPTED", label: "Accept" },
-    { target: "REJECTED", label: "Reject", danger: true },
-  ],
-  ACCEPTED: [
-    { target: "PRINTING", label: "Start printing" },
-    { target: "CANCELLED", label: "Cancel", danger: true },
-  ],
-  PRINTING: [
-    { target: "READY", label: "Mark ready" },
-    { target: "CANCELLED", label: "Cancel", danger: true },
-  ],
-  READY: [{ target: "COMPLETED", label: "Collected & paid" }],
-};
-
-/** Status buttons for one order on the shop dashboard. */
-export function ShopStatusActions({ orderId, status }: { orderId: string; status: string }) {
+/**
+ * Downloads one order file. The server signs the link and only then (for an
+ * ACCEPTED order) moves it to PRINTING; a failure changes nothing and shows
+ * here instead of navigating away. Stays disabled until the refreshed status
+ * arrives, so a double click can't fire twice.
+ */
+export function DownloadFileButton({
+  fileId,
+  children,
+  variant = "default",
+  className,
+}: {
+  fileId: string;
+  children: ReactNode;
+  variant?: "default" | "link";
+  className?: string;
+}) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
+  const [refreshing, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const actions = shopActions[status] ?? [];
+
+  const download = async () => {
+    setPending(true);
+    setError(null);
+    try {
+      const { url } = await postJson<{ url: string }>(`/api/shop/files/${fileId}`);
+      window.location.assign(url); // a signed attachment URL: the browser saves it and stays here
+      startTransition(() => router.refresh());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "The document couldn't be downloaded.");
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <span className="flex min-w-0 flex-col gap-1">
+      <Button type="button" variant={variant} disabled={pending || refreshing} onClick={download} className={className}>
+        {pending ? "Preparing…" : children}
+      </Button>
+      {error ? (
+        <span role="alert" className="text-[13px] font-medium text-destructive">
+          {error}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+type ShopTarget = "ACCEPTED" | "READY" | "COMPLETED" | "REJECTED" | "CANCELLED";
+type ShopAction = { target: ShopTarget; label: string; danger?: boolean };
+
+/**
+ * The shop's next moves (the server re-validates every one). No button moves an
+ * order to PRINTING: downloading the document does. Paid online orders skip
+ * Accept. Rejecting or cancelling a paid one refunds nothing: the payment stays
+ * recorded (REFUND_PENDING, "Paid · not completed") for the shop and student to
+ * settle; only a refund Razorpay confirms marks it Refunded.
+ */
+export function shopActions(status: string, online: boolean): ShopAction[] {
+  const cancel: ShopAction = { target: "CANCELLED", label: "Cancel", danger: true };
+  switch (status) {
+    case "PENDING":
+      return online
+        ? [{ target: "REJECTED", label: "Reject", danger: true }]
+        : [{ target: "ACCEPTED", label: "Accept" }, { target: "REJECTED", label: "Reject", danger: true }];
+    case "ACCEPTED":
+      return [cancel];
+    case "PRINTING":
+      return [{ target: "READY", label: "Ready for pickup" }, cancel];
+    case "READY":
+      return [{ target: "COMPLETED", label: "Mark collected" }];
+    default:
+      return [];
+  }
+}
+
+/** Status buttons for one order on the shop dashboard; `files` = its downloadable files. */
+export function ShopStatusActions({
+  orderId,
+  status,
+  paymentMethod,
+  files,
+}: {
+  orderId: string;
+  status: string;
+  paymentMethod: string;
+  files: { id: string; original_name: string }[];
+}) {
+  const router = useRouter();
+  const [pending, setPending] = useState(false);
+  const [refreshing, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const online = paymentMethod === "ONLINE";
+  const actions = shopActions(status, online);
+  // Mirrors printFrom in the download route.
+  const printable = status === "ACCEPTED" || (online && status === "PENDING");
   if (actions.length === 0) return null;
 
   const move = async (target: ShopTarget, label: string) => {
     let reason: string | undefined;
     if (target === "REJECTED" || target === "CANCELLED") {
-      const input = window.prompt(`${label} this order? Tell the student why (required):`);
+      // Online orders the shop can see are paid (orders_select_shop).
+      const paidNote = online ? " The payment is NOT refunded automatically; the student will be asked to contact you." : "";
+      const input = window.prompt(`${label} this order?${paidNote} Tell the student why (required):`);
       if (input === null) return;
       reason = input.trim().slice(0, 200);
       if (!reason) return;
@@ -174,7 +255,8 @@ export function ShopStatusActions({ orderId, status }: { orderId: string; status
     setError(null);
     try {
       await postJson(`/api/shop/orders/${orderId}/status`, reason ? { status: target, reason } : { status: target });
-      router.refresh();
+      // Stay disabled until the new status renders, so a double click can't fire twice.
+      startTransition(() => router.refresh());
     } catch (e) {
       setError(e instanceof Error ? e.message : "Status could not be changed.");
     } finally {
@@ -184,17 +266,23 @@ export function ShopStatusActions({ orderId, status }: { orderId: string; status
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-start gap-2">
+        {printable
+          ? files.map((f) => (
+              <DownloadFileButton key={f.id} fileId={f.id}>
+                {files.length === 1 ? "Download document" : `Download ${f.original_name}`}
+              </DownloadFileButton>
+            ))
+          : null}
         {actions.map((a) => (
           <Button
             key={a.target}
             type="button"
-            size="sm"
             variant={a.danger ? "outline" : "default"}
-            disabled={pending}
+            disabled={pending || refreshing}
             onClick={() => move(a.target, a.label)}
           >
-            {a.label}
+            {pending && !a.danger ? "Saving…" : a.label}
           </Button>
         ))}
       </div>

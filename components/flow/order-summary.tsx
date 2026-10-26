@@ -18,6 +18,13 @@ import { cn } from "@/lib/utils";
 
 const EASE_OUT = [0.22, 1, 0.36, 1] as const;
 
+const formatRate = (rupees: number) =>
+  new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    minimumFractionDigits: Number.isInteger(rupees) ? 0 : 2,
+  }).format(rupees);
+
 /** Blocks arrive in reading order; the total lands last. */
 const assembly = {
   hidden: {},
@@ -144,13 +151,9 @@ export function OrderSummary({
           </p>
           {price ? (
           <p className="mt-0.5 text-[12px] text-muted-foreground">
-            {formatSheetCount(price.sheets)} ·{" "}
-            {new Intl.NumberFormat("en-IN", {
-              style: "currency",
-              currency: "INR",
-              minimumFractionDigits: Number.isInteger(price.ratePerSheet) ? 0 : 2,
-            }).format(price.ratePerSheet)}{" "}
-            each
+            {/* Per-page tiers (e.g. K2's A4 B&W) bill pages x copies; otherwise sheets. */}
+            {price.perPage ? formatPageCount(price.perPage.pages) : formatSheetCount(price.sheets)} ·{" "}
+            {formatRate(price.perPage ? price.perPage.rate : price.ratePerSheet)} each
           </p>
           ) : (
             <p className="mt-0.5 text-[12px] text-muted-foreground">

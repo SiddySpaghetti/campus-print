@@ -1,4 +1,4 @@
-import { CreditCard, PackageCheck, Upload } from "lucide-react";
+import { PackageCheck, Store, Upload } from "lucide-react";
 
 import { Reveal } from "@/components/shared/reveal";
 import { Section } from "@/components/shared/section";
@@ -11,10 +11,10 @@ const steps = [
     description: "Upload your PDF or document.",
   },
   {
-    icon: CreditCard,
-    label: "Choose & Pay",
+    icon: Store,
+    label: "Choose",
     description:
-      "Choose a nearby print shop, select your print settings, and pay online.",
+      "Choose a nearby print shop and your print settings. You pay at the counter when you collect.",
   },
   {
     icon: PackageCheck,
@@ -37,7 +37,7 @@ export function HowItWorks() {
           id="how-it-works-title"
           eyebrow="How it works"
           title="Printing shouldn't take your whole break."
-          description="Send your documents ahead, pay online, and pick them up when they're ready."
+          description="Send your documents ahead, pick them up when they're ready, and pay at the counter."
         />
       </Reveal>
 

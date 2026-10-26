@@ -15,6 +15,9 @@ export type DashboardOrder = {
   payment_method: string;
   total_paise: number;
   created_at: string;
+  /** Only read by PaidNotCompleted, to flag money captured after a cancellation. */
+  paid_at?: string | null;
+  cancelled_at?: string | null;
 };
 
 /** null = the read failed. Say so rather than show 0 / ₹0. */
@@ -69,6 +72,39 @@ export function RecentlyClosed({ orders }: { orders: DashboardOrder[] }) {
         </ul>
       )}
     </details>
+  );
+}
+
+/**
+ * Every paid order of this shop that was cancelled or rejected and has no
+ * Razorpay-confirmed refund (REFUND_PENDING), however old: never just the
+ * latest few, so none drops out of sight before it is settled.
+ */
+export function PaidNotCompleted({ orders }: { orders: DashboardOrder[] }) {
+  if (orders.length === 0) return null;
+  return (
+    <section aria-labelledby="paid-not-completed" className="mt-10">
+      <h2 id="paid-not-completed" className="text-lg font-semibold text-ink">
+        Paid, not completed ({orders.length})
+      </h2>
+      <p className="mt-1 text-[13px] text-muted-foreground">
+        These were paid online, then cancelled or rejected. Nothing has been refunded automatically: settle each one
+        with the student. If you refund it in your Razorpay dashboard, it shows as Refunded here once Razorpay confirms.
+      </p>
+      <ul className="mt-3 flex flex-col gap-2">
+        {orders.map((o) => (
+          <li key={o.id} className="rounded-card border border-line bg-card p-4">
+            <OrderHeader order={o} />
+            {o.paid_at && o.cancelled_at && o.paid_at > o.cancelled_at ? (
+              <p className="mt-1 text-[13px] font-medium text-ink">
+                Paid after it was cancelled: nothing was printed. The student has been told to contact you.
+              </p>
+            ) : null}
+            {o.status_reason ? <p className="mt-1 text-[13px] text-muted-foreground">Reason: {o.status_reason}</p> : null}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

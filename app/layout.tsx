@@ -18,13 +18,28 @@ const bricolage = Bricolage_Grotesque({
   subsets: ["latin"],
 });
 
+const description =
+  "Upload your documents, choose your print settings, and pick them up from a campus print shop when they're ready. Pay at the counter when you collect.";
+
+// Set automatically by Vercel (production domain, no protocol); local builds fall back.
+const productionHost = process.env.VERCEL_PROJECT_PRODUCTION_URL;
+
 export const metadata: Metadata = {
+  metadataBase: new URL(productionHost ? `https://${productionHost}` : "http://localhost:3000"),
   title: {
     default: "CampusPrint — Print. Pay. Pick up. No queue.",
     template: "%s · CampusPrint",
   },
-  description:
-    "Upload your documents, choose your print settings, pay online, and pick them up from a campus print shop when they're ready.",
+  description,
+  applicationName: "CampusPrint",
+  openGraph: {
+    type: "website",
+    siteName: "CampusPrint",
+    locale: "en_IN",
+    title: "CampusPrint — Print. Pay. Pick up. No queue.",
+    description,
+  },
+  twitter: { card: "summary" },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

@@ -5,7 +5,7 @@ import { OrderTracker, type OrderStatus } from "@/components/flow/order-tracker"
 import { Container } from "@/components/shared/section";
 import { SectionHeading } from "@/components/shared/section-heading";
 import { Button } from "@/components/ui/button";
-import { canStudentCancel, FINAL_STATUSES, formatOrderDate, orderLabel, paymentLabel } from "@/lib/orders";
+import { canStudentCancel, FINAL_STATUSES, formatOrderDate, isPaidNotCompleted, orderLabel, paymentLabel } from "@/lib/orders";
 import { formatPageCount, formatSheetCount } from "@/lib/page-count";
 import {
   colourLabels,
@@ -42,6 +42,8 @@ type OrderRow = {
 const ORDER_COLUMNS =
   "id, order_number, shop_id, status, status_reason, payment_status, payment_method, colour_mode, paper_size, sides, copies, total_pages, sheets, total_paise, created_at, order_files(original_name)";
 
+export const metadata = { title: "Track order" };
+
 /**
  * Tracking for one of the signed-in student's orders: `?order=<id>`, or their
  * latest order when no id is given. Reads run AS the user, so RLS
@@ -59,7 +61,9 @@ export default async function TrackPage({ searchParams }: PageProps<"/start-prin
   query = isUuid(orderParam)
     ? query.eq("id", orderParam)
     : query.order("created_at", { ascending: false }).limit(1);
-  const { data: order } = await query.maybeSingle<OrderRow>();
+  const { data: order, error } = await query.maybeSingle<OrderRow>();
+  // An unknown or foreign id is "not found"; a failed read is an error, not that.
+  if (error) throw error;
 
   if (!order) {
     return (
@@ -74,7 +78,7 @@ export default async function TrackPage({ searchParams }: PageProps<"/start-prin
 
   const { data: shop } = await supabase
     .from("public_shops")
-    .select("name, prep_minutes")
+    .select("name, address, prep_minutes")
     .eq("id", order.shop_id)
     .maybeSingle();
 
@@ -127,13 +131,23 @@ export default async function TrackPage({ searchParams }: PageProps<"/start-prin
           {unpaid && !atCounter && order.status === "PENDING" && onlinePaymentAllowed(order.shop_id, true) ? (
             <PayNowButton orderId={order.id} label={label} />
           ) : null}
-          {canStudentCancel(order) ? <CancelOrderButton orderId={order.id} /> : null}
+          {canStudentCancel(order) ? (
+            <CancelOrderButton orderId={order.id} paid={order.payment_status === "PAID"} />
+          ) : null}
         </div>
 
         <div className="flex flex-col gap-5">
           <OrderTracker status={order.status} />
           {order.status_reason ? (
             <p className="text-[13px] text-muted-foreground">Reason: {order.status_reason}</p>
+          ) : null}
+          {isPaidNotCompleted(order) ? (
+            <p role="status" className="rounded-card border border-line bg-paper-deep p-4 text-[13px] text-ink">
+              This order wasn&apos;t completed. Your payment of {formatRupees(order.total_paise / 100)} is recorded and
+              has not been refunded yet. To request a refund, contact {shop?.name ?? "the shop"}
+              {shop?.address ? ` (${shop.address})` : ""}. A refund made through Razorpay shows here as
+              &ldquo;Refunded&rdquo; once Razorpay confirms it; your bank may take a few working days to show it.
+            </p>
           ) : null}
           {final ? (
             <Button asChild size="lg" className="w-full sm:w-auto">

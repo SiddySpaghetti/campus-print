@@ -7,6 +7,8 @@ import { Container } from "@/components/shared/section";
 import { safeNextPath } from "@/lib/server/validate";
 import { createClient } from "@/utils/supabase/server";
 
+export const metadata = { title: "Sign in" };
+
 export default async function LoginPage({ searchParams }: PageProps<"/login">) {
   const params = await searchParams;
   const next = safeNextPath(params.next);

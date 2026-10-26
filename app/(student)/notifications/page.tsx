@@ -31,6 +31,8 @@ const icons: Record<string, typeof Bell> = {
   refund_issued: Receipt,
 };
 
+export const metadata = { title: "Notifications" };
+
 /**
  * The student's in-app notifications, created by database triggers when an
  * order changes. Read as the user: RLS (notifications_select_own) limits this
@@ -38,12 +40,13 @@ const icons: Record<string, typeof Bell> = {
  */
 export default async function NotificationsPage() {
   const { supabase } = await requireStudentPage("/notifications");
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("notifications")
     .select("id, order_id, type, title, body, read_at, created_at")
     .order("created_at", { ascending: false })
     .limit(50)
     .returns<NotificationRow[]>();
+  if (error) throw error;
   const items = data ?? [];
   const unread = items.some((n) => !n.read_at);
 

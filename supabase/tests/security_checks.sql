@@ -1,10 +1,21 @@
 -- =============================================================================
 -- CampusPrint — repeatable database security checks
 -- =============================================================================
--- HOW TO RUN: paste PART A, then PART B, into the Supabase SQL editor (or the MCP
+-- HOW TO RUN: paste PART A, B, C, then D into the Supabase SQL editor (or the MCP
 -- execute_sql tool), one DO block at a time. Each block ENDS WITH AN EXCEPTION on
 -- purpose: that rolls back every fixture, so nothing is persisted. The exception
 -- text is the report: every line is "PASS ..." or "FAIL ...".
+--
+-- Automated: tests/db-security-checks.test.ts runs every part against the real
+-- migrations in PGlite (npm run test:security). There, PART B's two pg_cron
+-- lines can't pass (no pg_cron); check them on the project instead with
+--   select jobname, schedule, active from cron.job;
+--
+-- PARTS A–C need the real accounts below AND a shop with slug 'abc-xerox'. As of
+-- 2026-10-25 production has neither the student account nor that slug (the
+-- shopkeeper's shop now has an empty slug), so A–C abort there until these ids
+-- are updated to current test accounts. PART D brings its own fixtures and
+-- needs only migrations 20261025120000 + 20261025120100.
 --
 -- Why fixtures: "0 rows" from an empty table proves nothing. Each block inserts a
 -- second student, extra shops, paid/unpaid orders, files, storage objects,
@@ -459,7 +470,7 @@ begin
   select * into ord from public.orders where id = oP;
   r := r || case when ord.payment_status = 'REFUND_PENDING' and ord.refund_requested_at is not null then 'PASS cancelling a PAID order queues a refund' else 'FAIL refund not queued' end;
   perform set_config('request.jwt.claims', '{"role":"service_role"}', true); set local role service_role;
-  r := r || case when public.process_payment_event('razorpay','evt_d1','refund.processed',null,'pay_AAA111',200,'INR','{}') = 'refunded' then 'PASS verified refund.processed completes the refund' else 'FAIL refund event' end;
+  r := r || case when public.process_payment_event('razorpay','evt_d1','refund.processed',null,'pay_AAA111',200,'INR','{"refund_id": "rfnd_AAA111"}') = 'refunded' then 'PASS verified refund.processed completes the refund' else 'FAIL refund event' end;
   reset role;
   select * into ord from public.orders where id = oP;
   r := r || case when ord.payment_status = 'REFUNDED' and ord.refunded_at is not null then 'PASS order is REFUNDED with timestamp' else 'FAIL refund state' end;
@@ -633,8 +644,12 @@ begin
   r := r || case when n = 0 then 'PASS shopkeeper: cannot accept another shop''s order' else 'FAIL shopkeeper: accepted other shop order' end;
   update public.orders set status = 'ACCEPTED' where id = oc1; get diagnostics n = row_count;
   r := r || case when n = 1 then 'PASS shopkeeper: accept counter order' else 'FAIL accept' end;
-  update public.orders set status = 'PRINTING' where id = oc1; get diagnostics n = row_count;
-  r := r || case when n = 1 then 'PASS shopkeeper: start printing' else 'FAIL printing' end;
+  -- Printing starts only through the download route's start_printing (migration
+  -- 20261025120100): the shopkeeper's direct update must now fail.
+  begin update public.orders set status = 'PRINTING' where id = oc1; r := r || 'FAIL shopkeeper: set PRINTING directly'; exception when insufficient_privilege then r := r || 'PASS shopkeeper: cannot set PRINTING directly'; end;
+  reset role; perform set_config('request.jwt.claims', '{"role":"service_role"}', true); set local role service_role;
+  r := r || case when public.start_printing(oc1, sh1) then 'PASS download path (start_printing) starts printing an accepted counter order' else 'FAIL start_printing on accepted counter order' end;
+  reset role; perform set_config('request.jwt.claims', json_build_object('sub', shk, 'role', 'authenticated')::text, true); set local role authenticated;
   update public.orders set status = 'READY' where id = oc1; get diagnostics n = row_count;
   r := r || case when n = 1 then 'PASS shopkeeper: mark ready' else 'FAIL ready' end;
   update public.orders set status = 'COMPLETED' where id = oc1; get diagnostics n = row_count;
@@ -674,5 +689,247 @@ begin
   r := r || case when n = 1 then 'PASS auto-cancel never touches worked orders' else 'FAIL auto-cancel touched oc1' end;
 
   raise exception E'PART C REPORT (everything rolled back)%\n-- FAIL count: %', regexp_replace(r, '(PASS|FAIL) ', E'\n\\1 ', 'g'),
+    (length(r) - length(replace(r, 'FAIL ', ''))) / 5;
+end $$;
+
+
+-- ===================================== PART D: printing / payment invariants ==
+-- Self-contained: its own fixture students, shopkeepers, admin and shops (all
+-- rolled back), so it runs on any project. Needs migrations 20261025120000,
+-- 20261025120100 and 20261025120200 applied. Covers: payment immutability, shop
+-- ownership, the only path into PRINTING, payment-event replays, closed shops,
+-- rejection records, partial/duplicate/failed refunds, and REFUND_PENDING never
+-- shown as a completed refund.
+do $$
+declare
+  stu  uuid := '00000000-0000-4000-8000-0000000000d1';
+  stu2 uuid := '00000000-0000-4000-8000-0000000000d2';
+  shk  uuid := '00000000-0000-4000-8000-0000000000d3';
+  shk2 uuid := '00000000-0000-4000-8000-0000000000d4';
+  adm  uuid := '00000000-0000-4000-8000-0000000000d5';
+  sh1 uuid := gen_random_uuid(); sh2 uuid := gen_random_uuid();
+  pre text[];
+  oPaid uuid; oUnpaid uuid; oCounter uuid; oOther uuid; oRej uuid;
+  pUnpaid text; pOther text; pRej text; payRej text;
+  ord public.orders;
+  n int; res text; r text := '';
+begin
+  if to_regprocedure('public.start_printing(uuid, uuid)') is null then
+    raise exception 'ABORT: migration 20261025120000_print_on_download is not applied';
+  end if;
+  if to_regprocedure('private.orders_insert_guard()') is null then
+    raise exception 'ABORT: migration 20261025120100_printing_only_via_download is not applied';
+  end if;
+  if not exists (select 1 from information_schema.columns
+                  where table_schema = 'public' and table_name = 'orders' and column_name = 'refunded_paise') then
+    raise exception 'ABORT: migration 20261025120200_payment_reconciliation is not applied';
+  end if;
+  if not exists (select 1 from information_schema.columns
+                  where table_schema = 'public' and table_name = 'shops' and column_name = 'listed') then
+    raise exception 'ABORT: migration 20261025120300_pilot_shops_and_k2_page_pricing is not applied';
+  end if;
+
+  -- fixtures (owner) -----------------------------------------------------------
+  select array_agg(p) into pre from (
+    select chr(c) as p from generate_series(65, 90) c
+     where chr(c) not in (select order_prefix::text from public.shops) order by c desc limit 2) x;
+  insert into auth.users (id, email, aud, role) values
+    (stu,  'fixture-d-student@example.invalid',     'authenticated', 'authenticated'),
+    (stu2, 'fixture-d-student2@example.invalid',    'authenticated', 'authenticated'),
+    (shk,  'fixture-d-shopkeeper@example.invalid',  'authenticated', 'authenticated'),
+    (shk2, 'fixture-d-shopkeeper2@example.invalid', 'authenticated', 'authenticated'),
+    (adm,  'fixture-d-admin@example.invalid',       'authenticated', 'authenticated');
+  insert into public.shops (id, name, slug, order_prefix, is_verified, is_open, online_payment) values
+    (sh1, 'Fixture D1', 'fixture-d1', pre[1], true, true, true),
+    (sh2, 'Fixture D2', 'fixture-d2', pre[2], true, true, false);
+  update public.profiles set role = 'shopkeeper', shop_id = sh1 where id = shk;
+  update public.profiles set role = 'shopkeeper', shop_id = sh2 where id = shk2;
+  update public.profiles set role = 'admin' where id = adm;
+
+  insert into public.orders (student_id, shop_id, colour_mode, paper_size, sides, copies, total_pages, sheets, rate_per_sheet_paise, total_paise)
+    values (stu,  sh1, 'bw','a4','single',1,1,1,200,200) returning id into oPaid;
+  insert into public.orders (student_id, shop_id, colour_mode, paper_size, sides, copies, total_pages, sheets, rate_per_sheet_paise, total_paise)
+    values (stu,  sh1, 'bw','a4','single',1,1,1,200,200) returning id into oUnpaid;
+  insert into public.orders (student_id, shop_id, colour_mode, paper_size, sides, copies, total_pages, sheets, rate_per_sheet_paise, total_paise)
+    values (stu,  sh1, 'bw','a4','single',1,1,1,200,200) returning id into oRej;
+  insert into public.orders (student_id, shop_id, colour_mode, paper_size, sides, copies, total_pages, sheets, rate_per_sheet_paise, total_paise, payment_method)
+    values (stu,  sh1, 'bw','a4','single',1,1,1,200,200,'PAY_AT_COUNTER') returning id into oCounter;
+  insert into public.orders (student_id, shop_id, colour_mode, paper_size, sides, copies, total_pages, sheets, rate_per_sheet_paise, total_paise)
+    values (stu2, sh2, 'bw','a4','single',1,1,1,200,200) returning id into oOther;
+  pUnpaid := 'order_D' || substr(md5(oUnpaid::text), 1, 12);
+  pOther  := 'order_D' || substr(md5(oOther::text), 1, 12);
+  pRej    := 'order_D' || substr(md5(oRej::text), 1, 12);
+  payRej  := 'pay_D'   || substr(md5(oRej::text), 1, 12);
+  update public.orders set payment_order_id = pUnpaid where id = oUnpaid;
+  update public.orders set payment_order_id = pOther, payment_id = 'pay_D' || substr(md5(oOther::text), 1, 12), payment_status = 'PAID' where id = oOther;
+  update public.orders set payment_order_id = pRej, payment_id = payRej, payment_status = 'PAID' where id = oRej;
+  update public.orders set payment_status = 'PAID' where id = oPaid;
+  select count(*) into n from public.orders where id in (oPaid, oRej, oOther) and paid_at is not null and order_number is not null;
+  r := r || case when n = 3 then 'PASS fixture: 3 paid orders, 1 unpaid, 1 counter' else 'FAIL fixture n=' || n end;
+
+  -- STUDENT: cannot pay, reprice, insert, or start printing ----------------------
+  perform set_config('request.jwt.claims', json_build_object('sub', stu, 'role', 'authenticated')::text, true); set local role authenticated;
+  update public.orders set payment_status = 'PAID' where id = oUnpaid; get diagnostics n = row_count;
+  r := r || case when n = 0 then 'PASS student: cannot mark own order paid' else 'FAIL student marked own order paid' end;
+  update public.orders set total_paise = 1, rate_per_sheet_paise = 1, sheets = 1 where id = oUnpaid; get diagnostics n = row_count;
+  r := r || case when n = 0 then 'PASS student: cannot change own order amount' else 'FAIL student changed amount' end;
+  begin
+    insert into public.orders (student_id, shop_id, colour_mode, paper_size, sides, copies, total_pages, sheets, rate_per_sheet_paise, total_paise, payment_status)
+      values (stu, sh1, 'bw','a4','single',1,1,1,1,1,'PAID');
+    r := r || 'FAIL student: inserted a pre-paid order';
+  exception when insufficient_privilege then r := r || 'PASS student: cannot insert an order (pre-paid or otherwise)'; end;
+  begin perform public.start_printing(oPaid, sh1); r := r || 'FAIL student: start_printing callable';
+  exception when insufficient_privilege then r := r || 'PASS student: cannot call start_printing'; end;
+
+  -- SHOPKEEPER of sh1 --------------------------------------------------------------
+  reset role; perform set_config('request.jwt.claims', json_build_object('sub', shk, 'role', 'authenticated')::text, true); set local role authenticated;
+  select count(*) into n from public.orders where id = oPaid and status = 'PENDING';
+  r := r || case when n = 1 then 'PASS shopkeeper: paid online order is in the queue with no Accept step' else 'FAIL paid order not visible' end;
+  select count(*) into n from public.orders where id in (oUnpaid, oOther);
+  r := r || case when n = 0 then 'PASS shopkeeper: unpaid online and other-shop orders invisible' else 'FAIL shopkeeper sees n=' || n end;
+  update public.orders set status = 'REJECTED', status_reason = 'x' where id = oOther; get diagnostics n = row_count;
+  r := r || case when n = 0 then 'PASS shopkeeper: cannot act on another shop''s order' else 'FAIL shopkeeper changed another shop''s order' end;
+  begin update public.orders set status = 'PRINTING' where id = oPaid; r := r || 'FAIL shopkeeper: set PRINTING directly';
+  exception when insufficient_privilege then r := r || 'PASS shopkeeper: cannot set PRINTING directly'; end;
+  begin update public.orders set payment_status = 'REFUND_PENDING' where id = oPaid; r := r || 'FAIL shopkeeper: changed payment_status';
+  exception when insufficient_privilege then r := r || 'PASS shopkeeper: cannot change payment_status'; end;
+  begin update public.orders set total_paise = 1, rate_per_sheet_paise = 1, sheets = 1 where id = oPaid; r := r || 'FAIL shopkeeper: changed amount';
+  exception when insufficient_privilege then r := r || 'PASS shopkeeper: cannot change the amount'; end;
+  begin perform public.start_printing(oPaid, sh1); r := r || 'FAIL shopkeeper: start_printing callable';
+  exception when insufficient_privilege then r := r || 'PASS shopkeeper: cannot call start_printing'; end;
+
+  -- ADMIN session: no direct way into PRINTING either -------------------------------
+  reset role; perform set_config('request.jwt.claims', json_build_object('sub', adm, 'role', 'authenticated')::text, true); set local role authenticated;
+  begin update public.orders set status = 'PRINTING' where id = oPaid; r := r || 'FAIL admin session: set PRINTING directly';
+  exception when insufficient_privilege then r := r || 'PASS admin session: cannot set PRINTING directly'; end;
+  begin
+    insert into public.orders (student_id, shop_id, colour_mode, paper_size, sides, copies, total_pages, sheets, rate_per_sheet_paise, total_paise, payment_method, status)
+      values (stu, sh1, 'bw','a4','single',1,1,1,200,200,'PAY_AT_COUNTER','PRINTING');
+    r := r || 'FAIL admin session: inserted an order already PRINTING';
+  exception when insufficient_privilege then r := r || 'PASS admin session: cannot insert an order already PRINTING'; end;
+  begin update public.orders set payment_status = 'PAID' where id = oUnpaid; r := r || 'FAIL admin session: marked an order paid';
+  exception when insufficient_privilege then r := r || 'PASS admin session: cannot mark an order paid (only payment events can)'; end;
+  begin update public.orders set total_paise = 1, rate_per_sheet_paise = 1, sheets = 1 where id = oPaid; r := r || 'FAIL admin session: changed the amount';
+  exception when insufficient_privilege then r := r || 'PASS admin session: cannot change the amount'; end;
+
+  -- SERVICE ROLE: start_printing is the only way in ---------------------------------
+  reset role; perform set_config('request.jwt.claims', '{"role":"service_role"}', true); set local role service_role;
+  begin update public.orders set status = 'PRINTING' where id = oPaid; r := r || 'FAIL service role: raw update set PRINTING';
+  exception when insufficient_privilege then r := r || 'PASS service role: raw update cannot set PRINTING'; end;
+  begin update public.orders set payment_status = 'PAID' where id = oUnpaid; r := r || 'FAIL service role: raw update marked an order paid';
+  exception when insufficient_privilege then r := r || 'PASS service role: raw update cannot mark an order paid'; end;
+  r := r || case when not public.start_printing(oPaid, sh2) then 'PASS start_printing is pinned to the order''s own shop' else 'FAIL printed via another shop' end;
+  r := r || case when not public.start_printing(oCounter, sh1) then 'PASS unaccepted counter order does not print (Accept still required)' else 'FAIL counter order printed unaccepted' end;
+  begin perform public.start_printing(oUnpaid, sh1); r := r || 'FAIL unpaid online order printed';
+  exception when check_violation then r := r || 'PASS unpaid online order cannot print'; end;
+  r := r || case when public.start_printing(oPaid, sh1) then 'PASS start_printing: paid online order PENDING -> PRINTING' else 'FAIL start_printing' end;
+  r := r || case when not public.start_printing(oPaid, sh1) then 'PASS repeated download is a no-op' else 'FAIL second start_printing changed the order' end;
+
+  -- payment events: amount check, replay, double capture -----------------------------
+  res := public.process_payment_event('razorpay', 'evt_D_' || pUnpaid || '_low', 'payment.captured', pUnpaid, 'pay_Dlow', 199, 'INR', '{}');
+  r := r || case when res = 'amount_mismatch' then 'PASS underpaid capture rejected (amount_mismatch)' else 'FAIL underpay: ' || res end;
+  res := public.process_payment_event('razorpay', 'evt_D_' || pUnpaid, 'payment.captured', pUnpaid, 'pay_Dok', 200, 'INR', '{}');
+  r := r || case when res = 'paid' then 'PASS verified capture marks the order paid' else 'FAIL capture: ' || res end;
+  res := public.process_payment_event('razorpay', 'evt_D_' || pUnpaid, 'payment.captured', pUnpaid, 'pay_Dok', 200, 'INR', '{}');
+  r := r || case when res = 'duplicate' then 'PASS replayed webhook event is a no-op (duplicate)' else 'FAIL replay: ' || res end;
+  res := public.process_payment_event('razorpay', 'checkout:pay_Dok', 'payment.captured', pUnpaid, 'pay_Dok', 200, 'INR', '{}');
+  r := r || case when res = 'ignored_state' then 'PASS same payment via checkout-verify after webhook changes nothing' else 'FAIL double capture: ' || res end;
+
+  -- owner checks -----------------------------------------------------------------------
+  reset role;
+  select * into ord from public.orders where id = oPaid;
+  r := r || case when ord.status = 'PRINTING' and ord.accepted_at is null and ord.printing_at is not null
+                 then 'PASS printing_at set, no accepted_at (Accept skipped)' else 'FAIL printing state' end;
+  select count(*) into n from public.notifications where order_id = oPaid and type = 'order_printing';
+  r := r || case when n = 1 then 'PASS exactly one "being printed" notification' else 'FAIL printing notices n=' || n end;
+  select count(*) into n from public.payment_events where order_id = oUnpaid;
+  r := r || case when n = 3 then 'PASS payment events recorded (replay not stored twice)' else 'FAIL payment_events n=' || n end;
+  select count(*) into n from public.notifications where order_id = oUnpaid and type = 'order_placed';
+  r := r || case when n = 1 then 'PASS one payment-confirmed notification' else 'FAIL order_placed n=' || n end;
+
+  -- closed shop: no new orders, existing ones continue --------------------------------
+  update public.shops set is_open = false where id = sh1;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true); set local role service_role;
+  begin
+    perform public.create_order_verified(stu, sh1, 'bw', 'a4', 'single', 1,
+      jsonb_build_array(jsonb_build_object('storage_path', stu::text || '/' || gen_random_uuid() || '/' || gen_random_uuid() || '.pdf',
+        'original_name', 'x.pdf', 'mime_type', 'application/pdf', 'size_bytes', 10, 'page_count', 1)), null, 'ONLINE');
+    r := r || 'FAIL closed shop accepted a new order';
+  exception when others then r := r || case when sqlstate = 'P0001' then 'PASS closed shop refuses new orders' else 'FAIL closed shop: ' || sqlstate end; end;
+  reset role; perform set_config('request.jwt.claims', json_build_object('sub', shk, 'role', 'authenticated')::text, true); set local role authenticated;
+  update public.orders set status = 'READY' where id = oPaid; get diagnostics n = row_count;
+  update public.orders set status = 'COMPLETED' where id = oPaid and n = 1; get diagnostics n = row_count;
+  r := r || case when n = 1 then 'PASS closed shop still completes an existing paid order' else 'FAIL closed shop blocked existing order' end;
+
+  -- unlisted shop (pilot list): no new orders, server-side; shopkeepers can't relist
+  begin update public.shops set listed = false where id = sh1; r := r || 'FAIL shopkeeper changed listed';
+  exception when insufficient_privilege then r := r || 'PASS shopkeeper cannot list/unlist their shop'; end;
+  reset role;
+  update public.shops set listed = false, is_open = true where id = sh2;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true); set local role service_role;
+  begin
+    perform public.create_order_verified(stu, sh2, 'bw', 'a4', 'single', 1,
+      jsonb_build_array(jsonb_build_object('storage_path', stu::text || '/' || gen_random_uuid() || '/' || gen_random_uuid() || '.pdf',
+        'original_name', 'x.pdf', 'mime_type', 'application/pdf', 'size_bytes', 10, 'page_count', 1)), null, 'PAY_AT_COUNTER');
+    r := r || 'FAIL unlisted shop accepted a new order';
+  exception when others then r := r || case when sqlstate = 'P0002' then 'PASS unlisted shop refuses new orders' else 'FAIL unlisted shop: ' || sqlstate end; end;
+  reset role;
+  select count(*) into n from public.public_shops where id = sh2 and listed = false;
+  r := r || case when n = 1 then 'PASS unlisted shop still in public_shops (past orders keep its name), flagged listed=false' else 'FAIL unlisted shop view' end;
+  perform set_config('request.jwt.claims', json_build_object('sub', shk, 'role', 'authenticated')::text, true); set local role authenticated;
+
+  -- rejection record and REFUND_PENDING ------------------------------------------------
+  begin update public.orders set status = 'REJECTED' where id = oRej; r := r || 'FAIL rejected without a reason';
+  exception when check_violation then r := r || 'PASS rejection requires a reason'; end;
+  update public.orders set status = 'REJECTED', status_reason = 'Corrupt file' where id = oRej; get diagnostics n = row_count;
+  r := r || case when n = 1 then 'PASS shopkeeper rejects a paid order with a reason' else 'FAIL reject' end;
+  begin update public.orders set payment_status = 'REFUNDED' where id = oRej; r := r || 'FAIL shopkeeper marked a refund complete';
+  exception when insufficient_privilege then r := r || 'PASS shopkeeper cannot mark a refund complete'; end;
+  reset role;
+  select * into ord from public.orders where id = oRej;
+  r := r || case when ord.status = 'REJECTED' and ord.status_reason = 'Corrupt file' and ord.rejected_at is not null
+                  and ord.payment_status = 'REFUND_PENDING' and ord.paid_at is not null and ord.refunded_at is null
+                 then 'PASS rejection keeps reason, timestamp and payment record; REFUND_PENDING, not refunded'
+                 else 'FAIL rejection record' end;
+  select count(*) into n from public.notifications
+   where order_id = oRej and type = 'order_rejected' and body like 'Corrupt file%has not been refunded%contact the shop%'
+     and body !~* '(will be refunded|refund (is|has been) (issued|processed)|refunded automatically)';
+  r := r || case when n = 1 then 'PASS student told the reason, that nothing is refunded yet, and to contact the shop' else 'FAIL rejection notice' end;
+  select count(*) into n from public.notifications where order_id = oRej and type = 'refund_issued';
+  r := r || case when n = 0 then 'PASS no "refund issued" notice before Razorpay confirms' else 'FAIL premature refund notice' end;
+
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true); set local role service_role;
+  -- (needs 20261025120200_payment_reconciliation: refund ids and amounts)
+  res := public.process_payment_event('razorpay', 'evt_D_refund_live', 'refund.processed', pOther, null, 50, 'INR', '{"refund_id": "rfnd_Dlive01"}');
+  r := r || case when res = 'refund_on_paid_order' then 'PASS refund on a live order is recorded, never as REFUNDED' else 'FAIL live refund: ' || res end;
+  res := public.process_payment_event('razorpay', 'evt_D_refund_noid', 'refund.processed', pRej, payRej, 200, 'INR', '{}');
+  r := r || case when res = 'refund_unverified' then 'PASS refund event without a Razorpay refund id is not applied' else 'FAIL no-id refund: ' || res end;
+  res := public.process_payment_event('razorpay', 'evt_D_refund_p1', 'refund.processed', pRej, payRej, 80, 'INR', '{"refund_id": "rfnd_Dpart01"}');
+  r := r || case when res = 'partially_refunded' then 'PASS partial refund recorded as partial' else 'FAIL partial refund: ' || res end;
+  res := public.process_payment_event('razorpay', 'manual:rfnd_Dpart01', 'refund.processed', pRej, payRej, 80, 'INR', '{"refund_id": "rfnd_Dpart01"}');
+  r := r || case when res = 'duplicate_refund' then 'PASS same refund under another event id is not counted twice' else 'FAIL refund double-count: ' || res end;
+  res := public.process_payment_event('razorpay', 'evt_D_refund_big', 'refund.processed', pRej, payRej, 200, 'INR', '{"refund_id": "rfnd_Dbig001"}');
+  r := r || case when res = 'refund_exceeds_total' then 'PASS refund above the outstanding amount is not applied' else 'FAIL over-refund: ' || res end;
+  res := public.process_payment_event('razorpay', 'evt_D_refund_fail', 'refund.failed', pRej, payRej, 120, 'INR', '{"refund_id": "rfnd_Dfail01"}');
+  r := r || case when res = 'refund_failed' then 'PASS failed refund is recorded, changes nothing' else 'FAIL refund.failed: ' || res end;
+  reset role;
+  select count(*) into n from public.orders where id = oRej and payment_status = 'REFUND_PENDING' and refunded_paise = 80 and refunded_at is null;
+  r := r || case when n = 1 then 'PASS after a partial refund the order is still REFUND_PENDING (80 of 200)' else 'FAIL partial state' end;
+  select count(*) into n from public.notifications where order_id = oRej and type = 'refund_partial' and body like '%₹0.80%₹1.20%';
+  r := r || case when n = 1 then 'PASS student told the refunded and outstanding amounts' else 'FAIL partial refund notice' end;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true); set local role service_role;
+  res := public.process_payment_event('razorpay', 'evt_D_refund_p2', 'refund.processed', pRej, payRej, 120, 'INR', '{"refund_id": "rfnd_Dpart02"}');
+  r := r || case when res = 'refunded' then 'PASS refunds adding up to the full total mark REFUNDED' else 'FAIL full refund: ' || res end;
+  res := public.process_payment_event('razorpay', 'evt_D_refund_p2', 'refund.processed', pRej, payRej, 120, 'INR', '{"refund_id": "rfnd_Dpart02"}');
+  r := r || case when res = 'duplicate' then 'PASS replayed refund event is a no-op' else 'FAIL refund replay: ' || res end;
+  reset role;
+  select count(*) into n from public.orders where id = oRej and payment_status = 'REFUNDED' and refunded_paise = 200 and refunded_at is not null;
+  r := r || case when n = 1 then 'PASS REFUNDED only after verified refunds cover the total, with refunded_at' else 'FAIL refunded state' end;
+  select count(*) into n from public.orders where id = oOther and payment_status = 'PAID' and refunded_paise = 50;
+  r := r || case when n = 1 then 'PASS live order stays PAID with the refund recorded' else 'FAIL live order changed' end;
+  select count(*) into n from public.payment_events where order_id = oRej and event_type like 'refund.%' and result is not null;
+  r := r || case when n = 6 then 'PASS every refund event recorded with its outcome' else 'FAIL refund audit n=' || n end;
+
+  raise exception E'PART D REPORT (everything rolled back)%\n-- FAIL count: %', regexp_replace(r, '(PASS|FAIL) ', E'\n\\1 ', 'g'),
     (length(r) - length(replace(r, 'FAIL ', ''))) / 5;
 end $$;

@@ -16,13 +16,25 @@ export const statusLabels: Record<OrderStatus, string> = {
   REJECTED: "Rejected",
 };
 
+/**
+ * REFUND_PENDING is set by orders_lifecycle when a PAID order is cancelled or
+ * rejected. For the pilot it promises nothing: no refund is issued
+ * automatically, the student and shop settle it between them. It only means
+ * "paid, not completed, no refund confirmed". REFUNDED appears only once
+ * Razorpay's signed refund.processed webhook confirms a refund.
+ */
 export const paymentLabels: Record<string, string> = {
   PENDING: "Unpaid",
   PAID: "Paid",
   FAILED: "Payment failed",
-  REFUND_PENDING: "Refund pending",
+  REFUND_PENDING: "Paid · not completed",
   REFUNDED: "Refunded",
 };
+
+/** Paid, but cancelled or rejected and not refunded by Razorpay: the student and shop resolve it. */
+export function isPaidNotCompleted(order: { payment_status: string }) {
+  return order.payment_status === "REFUND_PENDING";
+}
 
 /** Counter orders stay unpaid in the system until collected and paid in person. */
 export function paymentLabel(order: { payment_status: string; payment_method?: string | null }) {

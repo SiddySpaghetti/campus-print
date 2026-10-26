@@ -383,27 +383,7 @@ const CrowdCanvas = ({
   );
 };
 
-const Skiper39 = () => {
-  return (
-    <div className="relative h-full w-full bg-white text-black">
-      <div className="top-22 absolute left-1/2 grid -translate-x-1/2 content-start justify-items-center gap-6 text-center text-black">
-        <span className="relative max-w-[12ch] text-xs uppercase leading-tight opacity-40 after:absolute after:left-1/2 after:top-full after:h-16 after:w-px after:bg-gradient-to-b after:from-white after:to-black after:content-['']">
-          Croud Canvas
-        </span>
-      </div>
-      <div className="absolute bottom-0 h-full w-screen">
-        <CrowdCanvas
-          src="https://cdn.21st.dev/assets/localized/abdb8990a7bef8c2f5af3e45f0a3c969c4b0603fba8be92e81347de4ea4e1ed7.png"
-          rows={15}
-          cols={7}
-        />
-      </div>
-    </div>
-  );
-};
-
-export { CrowdCanvas, Skiper39 };
-export default Skiper39;
+export { CrowdCanvas };
 
 /**
  * Skiper 39 Canvas_Landing_004 — React + Canvas

@@ -1,10 +1,12 @@
 /**
  * Print option types, labels and the price ESTIMATE shown in the student flow.
  *
- * Shops charge per *sheet*: double-sided puts two pages on one sheet. Rates
- * come from the shop's real shop_pricing rows. The authoritative total is
- * computed by the database (create_order_verified) from server-counted pages;
- * this mirrors its sheet maths so the estimate matches for readable files.
+ * Shops charge per *sheet* (double-sided puts two pages on one sheet), from
+ * their shop_pricing rows — unless the shop has per-page tiers for that
+ * colour/paper (shop_page_price_tiers, e.g. K2's A4 B&W), which price by
+ * billable pages (pages x copies) instead. The authoritative total is computed
+ * by the database (create_order_verified) from server-counted pages; this
+ * mirrors its maths so the estimate matches for readable files.
  */
 import type { FlowShop } from "@/lib/shops";
 
@@ -61,15 +63,38 @@ export const sidesOptions = [
   { value: "double", label: "Double" },
 ];
 
-export type PriceBreakdown = {
+/** A per-page rate that applies from `minPages` billable pages (pages x copies). */
+export type PageTier = { minPages: number; pricePaise: number };
+
+type SheetPrice = {
   /** Rupees per printed sheet, after colour and paper size. */
   ratePerSheet: number;
+  perPage?: undefined;
+};
+type PagePrice = {
+  /** A per-page tier applied (e.g. K2's A4 B&W): rupees per page and billable pages. */
+  perPage: { rate: number; pages: number };
+  ratePerSheet?: undefined;
+};
+export type PriceBreakdown = (SheetPrice | PagePrice) & {
   /** Sheets one copy needs. */
   sheetsPerCopy: number;
   /** Sheets for the whole order. */
   sheets: number;
   total: number;
 };
+
+/**
+ * The rate (paise) for this many billable pages: the tier with the highest
+ * minPages not above it, or null. Mirrors create_order_verified.
+ */
+export function pageTierRate(tiers: readonly PageTier[] | undefined, billablePages: number): number | null {
+  let best: PageTier | null = null;
+  for (const t of tiers ?? []) {
+    if (t.minPages <= billablePages && (!best || t.minPages > best.minPages)) best = t;
+  }
+  return best ? best.pricePaise : null;
+}
 
 /** Null when the shop doesn't offer this colour/paper combination. */
 export function calculatePrice({
@@ -81,19 +106,21 @@ export function calculatePrice({
   options: PrintOptions;
   pageCount: number;
 }): PriceBreakdown | null {
-  const ratePaise = shop.ratesPaise[`${options.colour}_${options.paper}`];
+  const key = `${options.colour}_${options.paper}` as const;
+  const ratePaise = shop.ratesPaise[key];
   if (ratePaise === undefined) return null;
+  const copies = Math.max(MIN_COPIES, options.copies);
   const sheetsPerCopy =
     options.sides === "double" ? Math.ceil(pageCount / 2) : pageCount;
-  const sheets = sheetsPerCopy * Math.max(MIN_COPIES, options.copies);
+  const sheets = sheetsPerCopy * copies;
 
-  return {
-    ratePerSheet: ratePaise / 100,
-    sheetsPerCopy,
-    sheets,
-    // Integer paise first, so there's no float drift.
-    total: (ratePaise * sheets) / 100,
-  };
+  // Integer paise first, so there's no float drift.
+  const pages = pageCount * copies;
+  const tierPaise = pageTierRate(shop.pageTiersPaise?.[key], pages);
+  if (tierPaise !== null) {
+    return { perPage: { rate: tierPaise / 100, pages }, sheetsPerCopy, sheets, total: (tierPaise * pages) / 100 };
+  }
+  return { ratePerSheet: ratePaise / 100, sheetsPerCopy, sheets, total: (ratePaise * sheets) / 100 };
 }
 
 /** Rupees with paise only when the amount actually has them. */

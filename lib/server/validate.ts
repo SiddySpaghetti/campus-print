@@ -146,10 +146,11 @@ export function parseUploadRequest(body: unknown): UploadRequest {
  * Shop status moves: target -> the statuses it may be reached from. Mirrors
  * orders_guard + orders_lifecycle (which stay the real authority); the route
  * also uses it as a compare-and-set so a double click can't fire twice.
+ * PRINTING is absent on purpose: downloading the file starts printing
+ * (POST /api/shop/files/[id]), never a bare button.
  */
 export const SHOP_TRANSITIONS = {
   ACCEPTED: ["PENDING"],
-  PRINTING: ["ACCEPTED"],
   READY: ["PRINTING"],
   COMPLETED: ["READY"],
   REJECTED: ["PENDING"],

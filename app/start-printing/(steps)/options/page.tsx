@@ -54,7 +54,7 @@ export default function OptionsPage() {
             />
           </Row>
 
-          <Row label="Sides" hint="Double-sided halves the sheets you pay for.">
+          <Row label="Sides" hint="Double-sided halves the sheets. Shops that charge per page price by pages, not sheets.">
             <SegmentedControl
               label="Sides"
               options={sidesOptions}

@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { Logo } from "@/components/shared/logo";
+import { Logo, LogoMark } from "@/components/shared/logo";
 import { Container } from "@/components/shared/section";
 
 const navLink =
@@ -18,7 +18,9 @@ export function StaffHeader({ area, email }: { area: string; email: string | und
               aria-label="CampusPrint home"
               className="shrink-0 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              <Logo />
+              {/* The wordmark doesn't fit beside the area badge below 375px. */}
+              <Logo className="max-[375px]:hidden" />
+              <LogoMark className="min-[375px]:hidden" />
             </Link>
             <span className="rounded-full border border-line px-2.5 py-0.5 font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
               {area}

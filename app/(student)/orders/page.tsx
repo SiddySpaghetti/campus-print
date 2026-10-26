@@ -28,6 +28,8 @@ type OrderRow = {
   created_at: string;
 };
 
+export const metadata = { title: "My orders" };
+
 /**
  * The signed-in student's orders, newest first. Read as the user, so RLS
  * (orders_select_own) is what limits this to their own orders.
@@ -35,12 +37,13 @@ type OrderRow = {
 export default async function MyOrdersPage() {
   const { supabase } = await requireStudentPage("/orders");
 
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("orders")
     .select("id, order_number, shop_id, status, payment_status, payment_method, colour_mode, paper_size, sides, copies, total_pages, total_paise, created_at")
     .order("created_at", { ascending: false })
     .limit(50)
     .returns<OrderRow[]>();
+  if (error) throw error;
   const orders = data ?? [];
 
   const shopIds = [...new Set(orders.map((o) => o.shop_id))];

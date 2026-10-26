@@ -1,8 +1,14 @@
 import { FileText } from "lucide-react";
 
-import { AutoRefresh, ShopStatusActions } from "@/components/flow/order-actions";
+import { AutoRefresh, DownloadFileButton, ShopStatusActions } from "@/components/flow/order-actions";
 import type { OrderStatus } from "@/components/flow/order-tracker";
-import { DailyStatsCards, OrderHeader, RecentlyClosed } from "@/components/flow/shop-dashboard";
+import {
+  DailyStatsCards,
+  OrderHeader,
+  PaidNotCompleted,
+  RecentlyClosed,
+  type DashboardOrder,
+} from "@/components/flow/shop-dashboard";
 import { Container } from "@/components/shared/section";
 import { StaffHeader } from "@/components/shared/staff-header";
 import { statusLabels } from "@/lib/orders";
@@ -46,7 +52,7 @@ export default async function ShopDashboardPage() {
 
   // The shop comes from the signed-in profile, never from the request; RLS
   // limits every read below to that shop as well.
-  const [{ data: shop }, { data, error }, stats] = await Promise.all([
+  const [{ data: shop }, { data, error }, stats, unsettled] = await Promise.all([
     supabase.from("shops").select("name, is_open").eq("id", shopId).maybeSingle(),
     supabase
       .from("orders")
@@ -58,9 +64,18 @@ export default async function ShopDashboardPage() {
       .limit(200)
       .returns<ShopOrder[]>(),
     shopId ? loadDailyStats(supabase, shopId) : null,
+    // All of them, not capped by the 200 above: these must stay visible until settled.
+    supabase
+      .from("orders")
+      .select("id, order_number, status, status_reason, payment_status, payment_method, total_paise, created_at, paid_at, cancelled_at")
+      .eq("shop_id", shopId)
+      .eq("payment_status", "REFUND_PENDING")
+      .order("refund_requested_at", { ascending: true })
+      .returns<DashboardOrder[]>(),
   ]);
   // A failed read must not look like an empty queue: app/error.tsx shows a retry.
   if (error) throw error;
+  if (unsettled.error) throw unsettled.error;
   const orders = data ?? [];
   const count = (s: OrderStatus) => orders.filter((o) => o.status === s).length;
   // Oldest first in the queue, so the shop works in arrival order.
@@ -111,12 +126,13 @@ export default async function ShopDashboardPage() {
                         {f.file_deleted_at ? (
                           <span className="truncate text-muted-foreground">{f.original_name} (deleted)</span>
                         ) : (
-                          <a
-                            href={`/api/shop/files/${f.id}`}
-                            className="truncate font-medium text-ink underline decoration-line underline-offset-4 hover:decoration-ink"
+                          <DownloadFileButton
+                            fileId={f.id}
+                            variant="link"
+                            className="block h-auto max-w-full truncate text-left text-[13px] decoration-1"
                           >
                             {f.original_name}
-                          </a>
+                          </DownloadFileButton>
                         )}
                         <span className="shrink-0 text-muted-foreground">
                           {formatPageCount(f.page_count)} · {(f.size_bytes / 1024 / 1024).toFixed(1)} MB
@@ -126,13 +142,19 @@ export default async function ShopDashboardPage() {
                   </ul>
                   {o.student_note ? <p className="mt-2 text-[13px] text-ink">Note: {o.student_note}</p> : null}
                   <div className="mt-4">
-                    <ShopStatusActions orderId={o.id} status={o.status} />
+                    <ShopStatusActions
+                      orderId={o.id}
+                      status={o.status}
+                      paymentMethod={o.payment_method}
+                      files={o.order_files.filter((f) => !f.file_deleted_at)}
+                    />
                   </div>
                 </li>
               ))}
             </ul>
           )}
 
+          <PaidNotCompleted orders={unsettled.data ?? []} />
           <RecentlyClosed orders={closed} />
         </Container>
       </main>

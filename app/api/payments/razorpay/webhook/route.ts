@@ -3,6 +3,19 @@ import { clientKey, rateLimit } from "@/lib/server/rate-limit";
 import { parsePaymentEvent, razorpayAccounts, verifyWebhookSignature } from "@/lib/server/razorpay";
 import { createAdminClient } from "@/utils/supabase/admin";
 
+/** process_payment_event outcomes that need manual reconciliation. */
+const NEEDS_A_HUMAN = new Set([
+  "amount_mismatch",
+  "unknown_order",
+  "paid_after_cancel",
+  "partially_refunded",
+  "refund_on_paid_order",
+  "refund_exceeds_total",
+  "refund_unverified",
+  "refund_amount_invalid",
+  "refund_failed",
+]);
+
 /**
  * Razorpay webhook — the authoritative way an order becomes PAID (the checkout
  * verify route is a faster path into the same process_payment_event).
@@ -93,8 +106,8 @@ export function POST(request: Request) {
       logServerError("api/webhook/razorpay:process", error);
       return errorResponse(SAFE.internal); // 500 => Razorpay retries; processing is idempotent
     }
-    if (data === "amount_mismatch" || data === "unknown_order") {
-      // Worth a human look, but retrying would not help.
+    if (NEEDS_A_HUMAN.has(String(data))) {
+      // Worth a human look (docs/refund-reconciliation.md), but retrying would not help.
       logServerError("api/webhook/razorpay:event", new Error(`event ${String(data)}`));
     }
     return Response.json({ received: true });

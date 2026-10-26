@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { Bell } from "lucide-react";
 
-import { Logo } from "@/components/shared/logo";
+import { Logo, LogoMark } from "@/components/shared/logo";
 import { Container } from "@/components/shared/section";
-import { getPageSession, requireStudentPage } from "@/lib/server/auth";
+import { getPageSession } from "@/lib/server/auth";
 
 const navLink =
   "rounded-full px-2.5 py-1.5 font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground transition-colors hover:bg-paper-deep hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
@@ -13,13 +13,10 @@ const navLink =
  * (with the unread count, read through RLS so only the student's own) and
  * sign out. `children` renders under it (the print flow's step rail).
  *
- * With `next` it also guards the page (signed out → /login?next=…). Without
- * it, it renders nothing for non-students and the page must guard itself:
- * a layout can't see the URL, so a fixed `next` would send a student who
- * signed in from /notifications to the wrong page.
+ * It renders nothing for non-students and never guards: a layout can't see
+ * the URL, so each page calls requireStudentPage itself with its own `next`.
  */
-export async function StudentHeader({ next, children }: { next?: string; children?: React.ReactNode }) {
-  if (next) await requireStudentPage(next);
+export async function StudentHeader({ children }: { children?: React.ReactNode }) {
   const { supabase, user, profile } = await getPageSession();
   if (!user || !profile || profile.deleted_at || profile.role !== "student") return null;
   const { count } = await supabase
@@ -37,7 +34,9 @@ export async function StudentHeader({ next, children }: { next?: string; childre
             aria-label="CampusPrint home"
             className="shrink-0 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-paper"
           >
-            <Logo />
+            {/* The wordmark doesn't fit beside the nav below 375px. */}
+            <Logo className="max-[375px]:hidden" />
+            <LogoMark className="min-[375px]:hidden" />
           </Link>
 
           <nav aria-label="Account" className="flex min-w-0 items-center gap-1">

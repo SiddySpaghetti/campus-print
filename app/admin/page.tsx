@@ -33,7 +33,7 @@ const td = "px-3 py-2 text-[13px] text-ink";
 export default async function AdminPage() {
   const { supabase, user } = await requireRolePage("admin", "/admin");
 
-  const [{ data: shopsData }, { data: ordersData }, { data: profilesData }] = await Promise.all([
+  const [shopsResult, ordersResult, profilesResult] = await Promise.all([
     supabase.from("shops").select("id, name, is_verified, is_open, prep_minutes, deleted_at").order("sort_order").returns<AdminShop[]>(),
     supabase
       .from("orders")
@@ -43,9 +43,12 @@ export default async function AdminPage() {
       .returns<AdminOrder[]>(),
     supabase.from("profiles").select("id, role, full_name, shop_id, created_at, deleted_at").order("created_at").returns<AdminProfile[]>(),
   ]);
-  const shops = shopsData ?? [];
-  const orders = ordersData ?? [];
-  const profiles = profilesData ?? [];
+  // Partial data would make the counts lie; app/error.tsx shows a retry instead.
+  const failed = shopsResult.error ?? ordersResult.error ?? profilesResult.error;
+  if (failed) throw failed;
+  const shops = shopsResult.data ?? [];
+  const orders = ordersResult.data ?? [];
+  const profiles = profilesResult.data ?? [];
   const shopName = new Map(shops.map((s) => [s.id, s.name]));
 
   const byStatus = (Object.keys(statusLabels) as OrderStatus[]).map((s) => [s, orders.filter((o) => o.status === s).length] as const);

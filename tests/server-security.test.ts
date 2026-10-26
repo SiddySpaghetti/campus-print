@@ -132,9 +132,12 @@ describe("input validation", () => {
 
 describe("shop status changes", () => {
   it("accepts forward moves without a reason", () => {
-    for (const status of ["ACCEPTED", "PRINTING", "READY", "COMPLETED"]) {
+    for (const status of ["ACCEPTED", "READY", "COMPLETED"]) {
       assert.deepEqual(parseStatusChange({ status }), { status, reason: null });
     }
+  });
+  it("has no bare 'start printing' move: only a document download starts printing", () => {
+    assert.throws(() => parseStatusChange({ status: "PRINTING" }), ValidationError);
   });
   it("requires a short reason to reject or cancel", () => {
     assert.equal(parseStatusChange({ status: "REJECTED", reason: " blank file " }).reason, "blank file");
@@ -232,6 +235,27 @@ describe("webhook signature", () => {
     })!;
     assert.deepEqual(e.payload, { event: "payment.captured", order_id: "order_1", payment_id: "pay_1", amount: 500, currency: "INR" });
     assert.equal(JSON.stringify(e.payload).includes("a@b.c"), false);
+  });
+
+  it("refund events carry THIS refund's amount and id, never the payment's full amount", () => {
+    for (const event of ["refund.processed", "refund.failed"]) {
+      const e = parsePaymentEvent({
+        event,
+        payload: {
+          refund: { entity: { id: "rfnd_ABC123", payment_id: "pay_1", amount: 150, currency: "INR", notes: { email: "a@b.c" } } },
+          payment: { entity: { id: "pay_1", order_id: "order_1", amount: 500, amount_refunded: 150, currency: "INR", email: "a@b.c" } },
+        },
+      })!;
+      assert.deepEqual(
+        [e.eventType, e.paymentOrderId, e.paymentId, e.amountPaise, e.currency],
+        [event, "order_1", "pay_1", 150, "INR"],
+      );
+      assert.deepEqual(e.payload, { event, order_id: "order_1", payment_id: "pay_1", refund_id: "rfnd_ABC123", amount: 150, currency: "INR" });
+      assert.equal(JSON.stringify(e.payload).includes("a@b.c"), false);
+    }
+    // Without a payment entity the order is found by payment id; a refund without an amount stays unapplied (null).
+    const bare = parsePaymentEvent({ event: "refund.processed", payload: { refund: { entity: { id: "rfnd_X12345", payment_id: "pay_2" } } } })!;
+    assert.deepEqual([bare.paymentOrderId, bare.paymentId, bare.amountPaise], [null, "pay_2", null]);
   });
 });
 

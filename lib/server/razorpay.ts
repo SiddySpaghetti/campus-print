@@ -117,7 +117,7 @@ export type ParsedPaymentEvent = {
   payload: Record<string, unknown>;
 };
 
-const HANDLED = new Set(["payment.captured", "payment.failed", "order.paid", "refund.processed"]);
+const HANDLED = new Set(["payment.captured", "payment.failed", "order.paid", "refund.processed", "refund.failed"]);
 
 /** Pulls only the fields we act on out of Razorpay's envelope. */
 export function parsePaymentEvent(body: unknown): ParsedPaymentEvent | null {
@@ -138,9 +138,26 @@ export function parsePaymentEvent(body: unknown): ParsedPaymentEvent | null {
   const int = (v: unknown) => (Number.isInteger(v) ? (v as number) : null);
 
   const paymentOrderId = str(pay?.order_id) ?? str(ord?.id);
-  const paymentId = str(pay?.id) ?? str(ref?.payment_id);
-  const amountPaise = int(pay?.amount) ?? int(ord?.amount_paid) ?? int(ref?.amount);
-  const currency = str(pay?.currency) ?? str(ord?.currency) ?? str(ref?.currency);
+  // A refund event's amount is THIS refund's, never the payment's (a partial
+  // refund must not look like a full one); refund_id lets the database count
+  // each Razorpay refund once.
+  if (b.event.startsWith("refund.")) {
+    const paymentId = str(ref?.payment_id) ?? str(pay?.id);
+    const amountPaise = int(ref?.amount);
+    const currency = str(ref?.currency);
+    const refundId = str(ref?.id);
+    return {
+      eventType: b.event,
+      paymentOrderId,
+      paymentId,
+      amountPaise,
+      currency,
+      payload: { event: b.event, order_id: paymentOrderId, payment_id: paymentId, refund_id: refundId, amount: amountPaise, currency },
+    };
+  }
+  const paymentId = str(pay?.id);
+  const amountPaise = int(pay?.amount) ?? int(ord?.amount_paid);
+  const currency = str(pay?.currency) ?? str(ord?.currency);
   return {
     eventType: b.event,
     paymentOrderId,

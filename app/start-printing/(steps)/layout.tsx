@@ -1,5 +1,7 @@
 import { requireStudentPage } from "@/lib/server/auth";
 
+export const metadata = { title: "Print order" };
+
 /**
  * Guard for the client-component steps (upload, options, review), which can't
  * call requireStudentPage themselves. Their state lives in memory, so after
