@@ -35,12 +35,18 @@ const headline: Record<OrderStatus, string> = {
   REJECTED: "Rejected by the shop",
 };
 
-/** Shows the order's real status as stored in the database. */
-export function OrderTracker({ status }: { status: OrderStatus }) {
+/**
+ * Shows the order's real status as stored in the database. Paid online orders
+ * skip Accept (the shop's download starts printing), so `online` drops that
+ * step — unless an older online order really is ACCEPTED.
+ */
+export function OrderTracker({ status, online = false }: { status: OrderStatus; online?: boolean }) {
   const reduced = useReducedMotion();
   const ended = status === "CANCELLED" || status === "REJECTED";
   const done = status === "READY" || status === "COMPLETED";
-  const activeIndex = trackingSteps.findIndex((step) => step.id === status);
+  const steps =
+    online && status !== "ACCEPTED" ? trackingSteps.filter((step) => step.id !== "ACCEPTED") : trackingSteps;
+  const activeIndex = steps.findIndex((step) => step.id === status);
 
   return (
     <div className="flex flex-col gap-5">
@@ -97,10 +103,10 @@ export function OrderTracker({ status }: { status: OrderStatus }) {
 
       {ended ? null : (
         <ol className="flex flex-col rounded-card border border-line bg-card p-5 md:p-6">
-          {trackingSteps.map((step, index) => {
+          {steps.map((step, index) => {
             const state =
               index < activeIndex ? "done" : index === activeIndex ? "active" : "pending";
-            const isLast = index === trackingSteps.length - 1;
+            const isLast = index === steps.length - 1;
 
             return (
               <li

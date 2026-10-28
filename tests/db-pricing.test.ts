@@ -12,9 +12,9 @@ import { before, describe, it } from "node:test";
 
 import type { PGlite, Transaction } from "@electric-sql/pglite";
 
-import type { PrintShop } from "../lib/data/print-shops";
+import { formatPerPageRange, type PrintShop } from "../lib/data/print-shops";
 import { calculatePrice, pageTierRate, type ColourMode, type PaperSize, type SideMode } from "../lib/pricing";
-import { toFlowShops, type FlowShop } from "../lib/shops";
+import { perPageRange, toFlowShops, type FlowShop } from "../lib/shops";
 import { freshSupabaseDb } from "./supabase-pglite";
 
 const STUDENT = "00000000-0000-4000-8000-00000000e001";
@@ -197,6 +197,19 @@ describe("pilot shop list: only K2 and Sitaram take new orders", () => {
     const name = await as("authenticated", STUDENT, async (tx) =>
       (await tx.query<{ name: string }>("select name from public.public_shops where id = $1", [HARSH])).rows[0]?.name);
     assert.equal(name, "Harsh Bhaiya");
+  });
+
+  it("shop cards (signed out): K2's B&W shows Rs2-Rs5/page from public_shops.page_tiers, Sitaram stays per sheet", async () => {
+    const rows = await db.transaction(async (tx) => {
+      await tx.query("set local role anon");
+      return (await tx.query<{ id: string; page_tiers: unknown }>("select id, page_tiers from public.public_shops")).rows;
+    });
+    const tiers = (id: string) => rows.find((r) => r.id === id)?.page_tiers;
+    assert.deepEqual(perPageRange(tiers(K2), "bw"), { min: 2, max: 5 });
+    assert.equal(formatPerPageRange(perPageRange(tiers(K2), "bw")!), "₹2–₹5/page");
+    assert.equal(perPageRange(tiers(K2), "colour"), null);
+    assert.equal(perPageRange(tiers(SITARAM), "bw"), null);
+    assert.equal(perPageRange(undefined, "bw"), null); // before the migration: no column
   });
 });
 

@@ -12,6 +12,7 @@
 -- 2. shop_page_price_tiers: per-page rates by billable pages (pages x copies).
 --    Seeded for K2 only, A4 B&W only: 1-3 pages Rs5, 4-8 Rs3, 9+ Rs2. Every
 --    other shop, A3 and colour keep per-sheet pricing from shop_pricing.
+--    public_shops.page_tiers exposes them so shop cards show per-page rates.
 -- 3. orders.pricing_unit ('sheet' | 'page'): how total_paise was computed.
 --    Existing orders are 'sheet' and keep their stored prices; the total check
 --    now reads: total = rate x (pages x copies) for 'page', rate x sheets else.
@@ -29,39 +30,6 @@ update public.shops set listed = false
  where slug not in ('k2-print-store', 'sitaram-prints')
    and exists (select 1 from public.shops where slug = 'k2-print-store')
    and exists (select 1 from public.shops where slug = 'sitaram-prints');
-
-create or replace view public.public_shops with (security_invoker = false) as
-select
-  s.id,
-  s.slug,
-  s.name,
-  s.description,
-  s.address,
-  s.distance_metres,
-  s.is_open,
-  s.prep_minutes,
-  s.sort_order,
-  -- "From" prices in paise per sheet (cheapest active print option).
-  (select min(p.price_paise) from public.shop_pricing p
-    where p.shop_id = s.id and p.service = 'print' and p.colour_mode = 'bw'
-      and p.is_active and p.deleted_at is null)     as bw_from_paise,
-  (select min(p.price_paise) from public.shop_pricing p
-    where p.shop_id = s.id and p.service = 'print' and p.colour_mode = 'colour'
-      and p.is_active and p.deleted_at is null)     as colour_from_paise,
-  -- Which services the shop offers, e.g. {print,photocopy,scanning}.
-  coalesce((select array_agg(distinct p.service order by p.service)
-              from public.shop_pricing p
-             where p.shop_id = s.id and p.is_active and p.deleted_at is null),
-           '{}'::text[])                            as services,
-  -- Pilot switch (admin-only): false = no new orders. Exposed instead of
-  -- filtered so students' past orders still show the shop's name.
-  s.listed
-from public.shops s
-where s.deleted_at is null and s.is_verified
-order by s.sort_order, s.name;
-
--- Owner rights on purpose (see 20261012103724_restore_public_shops_definer_view).
-alter view public.public_shops set (security_invoker = false);
 
 -- 2. Per-page tiers ------------------------------------------------------------
 create table public.shop_page_price_tiers (
@@ -88,6 +56,50 @@ insert into public.shop_page_price_tiers (shop_id, colour_mode, paper_size, min_
 select s.id, 'bw', 'a4', t.min_pages, t.price_paise
   from public.shops s, (values (1, 500), (4, 300), (9, 200)) as t (min_pages, price_paise)
  where s.slug = 'k2-print-store';
+
+-- public_shops (after the tiers table it reads) ---------------------------------
+create or replace view public.public_shops with (security_invoker = false) as
+select
+  s.id,
+  s.slug,
+  s.name,
+  s.description,
+  s.address,
+  s.distance_metres,
+  s.is_open,
+  s.prep_minutes,
+  s.sort_order,
+  -- "From" prices in paise per sheet (cheapest active print option).
+  (select min(p.price_paise) from public.shop_pricing p
+    where p.shop_id = s.id and p.service = 'print' and p.colour_mode = 'bw'
+      and p.is_active and p.deleted_at is null)     as bw_from_paise,
+  (select min(p.price_paise) from public.shop_pricing p
+    where p.shop_id = s.id and p.service = 'print' and p.colour_mode = 'colour'
+      and p.is_active and p.deleted_at is null)     as colour_from_paise,
+  -- Which services the shop offers, e.g. {print,photocopy,scanning}.
+  coalesce((select array_agg(distinct p.service order by p.service)
+              from public.shop_pricing p
+             where p.shop_id = s.id and p.is_active and p.deleted_at is null),
+           '{}'::text[])                            as services,
+  -- Pilot switch (admin-only): false = no new orders. Exposed instead of
+  -- filtered so students' past orders still show the shop's name.
+  s.listed,
+  -- Per-page tiers ([{colour_mode, paper_size, min_pages, price_paise}]), so
+  -- the shop card can show K2's "Rs2-Rs5/page" instead of a per-sheet "from".
+  -- Public prices, like the "from" columns above (signed-out visitors read only
+  -- this view).
+  coalesce((select jsonb_agg(jsonb_build_object('colour_mode', t.colour_mode, 'paper_size', t.paper_size,
+                                                'min_pages', t.min_pages, 'price_paise', t.price_paise)
+                             order by t.colour_mode, t.paper_size, t.min_pages)
+              from public.shop_page_price_tiers t
+             where t.shop_id = s.id),
+           '[]'::jsonb)                             as page_tiers
+from public.shops s
+where s.deleted_at is null and s.is_verified
+order by s.sort_order, s.name;
+
+-- Owner rights on purpose (see 20261012103724_restore_public_shops_definer_view).
+alter view public.public_shops set (security_invoker = false);
 
 -- 3. Orders record how they were priced -----------------------------------------
 alter table public.orders

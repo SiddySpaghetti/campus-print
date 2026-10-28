@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
   formatDistance,
+  formatPerPageRange,
   formatPricePerPage,
   type PrintShop,
 } from "@/lib/data/print-shops";
@@ -87,8 +88,17 @@ export function PrintShopCard({
 
       {/* Pricing + preparation time */}
       <dl className="mt-5 flex flex-col gap-2 border-t border-line pt-4 text-[13px]">
-        <PriceRow label="B&W from" value={formatPricePerPage(shop.bwFromInr)} />
-        <PriceRow label="Colour from" value={formatPricePerPage(shop.colourFromInr)} />
+        {/* Tiered shops (K2's A4 B&W) show the per-page range, not a per-sheet "from". */}
+        {shop.bwPerPageInr ? (
+          <PriceRow label="B&W" value={formatPerPageRange(shop.bwPerPageInr)} />
+        ) : (
+          <PriceRow label="B&W from" value={formatPricePerPage(shop.bwFromInr)} />
+        )}
+        {shop.colourPerPageInr ? (
+          <PriceRow label="Colour" value={formatPerPageRange(shop.colourPerPageInr)} />
+        ) : (
+          <PriceRow label="Colour from" value={formatPricePerPage(shop.colourFromInr)} />
+        )}
         <div className="flex items-baseline justify-between gap-3">
           <dt className="text-muted-foreground">Ready in</dt>
           <dd className="flex items-center gap-1.5 font-medium text-ink">

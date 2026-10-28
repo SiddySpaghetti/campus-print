@@ -3,13 +3,14 @@ import { errorResponse, handle, logServerError, SAFE } from "@/lib/server/errors
 import { rateLimit } from "@/lib/server/rate-limit";
 
 /**
- * Mark all of the signed-in student's notifications as read. Runs AS the user:
- * RLS (notifications_update_own) limits it to their own rows and
+ * Mark all of the signed-in student's or shopkeeper's notifications as read
+ * (the shop dashboard's new-order alerts too). Runs AS the user: RLS
+ * (notifications_update_own) limits it to their own rows and
  * notifications_guard allows only read_at to change.
  */
 export function POST() {
   return handle("api/notifications/read", async () => {
-    const { supabase, user } = await requireRole("student");
+    const { supabase, user } = await requireRole("student", "shopkeeper");
 
     const limited = await rateLimit(`notifications_read:${user.id}`, 60, 600);
     if (limited) return limited;

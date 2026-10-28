@@ -95,6 +95,16 @@ describe("razorpay webhook route", () => {
     assert.deepEqual(JSON.parse(r.text), { error: { code: "unavailable", message: "This feature isn't available right now." } });
   });
 
+  it("a validly signed unsupported event (payment.authorized) is acknowledged (200) without reaching the database", async () => {
+    const other = JSON.stringify({ event: "payment.authorized", payload: { payment: { entity: { id: "pay_1", order_id: "order_1", amount: 200 } } } });
+    // With no service key, anything that touched the database would answer 503.
+    const r = await post({ body: other, headers: { "x-razorpay-signature": sign(other), "x-razorpay-event-id": "evt_2" } });
+    assert.equal(r.status, 200);
+    assert.deepEqual(JSON.parse(r.text), { received: true });
+    const unsigned = await post({ body: other, headers: { "x-razorpay-signature": sign(other, "wrong-secret"), "x-razorpay-event-id": "evt_2" } });
+    assert.equal(unsigned.status, 400); // still needs a valid signature
+  });
+
   it("with no webhook secret configured it refuses everything (503)", async () => {
     delete process.env.RAZORPAY_WEBHOOK_SECRET;
     const r = await post({ headers: { "x-razorpay-signature": sign(body), "x-razorpay-event-id": "evt_1" } });

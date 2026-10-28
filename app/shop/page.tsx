@@ -7,12 +7,14 @@ import {
   OrderHeader,
   PaidNotCompleted,
   RecentlyClosed,
+  ShopAlerts,
   type DashboardOrder,
+  type ShopAlert,
 } from "@/components/flow/shop-dashboard";
 import { Container } from "@/components/shared/section";
 import { StaffHeader } from "@/components/shared/staff-header";
 import { statusLabels } from "@/lib/orders";
-import { formatPageCount } from "@/lib/page-count";
+import { formatPageCount, formatSheetCount } from "@/lib/page-count";
 import { colourLabels, paperLabels, sidesLabels, type ColourMode, type PaperSize, type SideMode } from "@/lib/pricing";
 import { requireRolePage } from "@/lib/server/auth";
 import { loadDailyStats } from "@/lib/shop-stats";
@@ -52,7 +54,7 @@ export default async function ShopDashboardPage() {
 
   // The shop comes from the signed-in profile, never from the request; RLS
   // limits every read below to that shop as well.
-  const [{ data: shop }, { data, error }, stats, unsettled] = await Promise.all([
+  const [{ data: shop }, { data, error }, stats, unsettled, alerts] = await Promise.all([
     supabase.from("shops").select("name, is_open").eq("id", shopId).maybeSingle(),
     supabase
       .from("orders")
@@ -72,10 +74,19 @@ export default async function ShopDashboardPage() {
       .eq("payment_status", "REFUND_PENDING")
       .order("refund_requested_at", { ascending: true })
       .returns<DashboardOrder[]>(),
+    // RLS (notifications_select_own): only this shopkeeper's own alerts.
+    supabase
+      .from("notifications")
+      .select("id, type, title, body, created_at")
+      .is("read_at", null)
+      .order("created_at", { ascending: false })
+      .limit(20)
+      .returns<ShopAlert[]>(),
   ]);
   // A failed read must not look like an empty queue: app/error.tsx shows a retry.
   if (error) throw error;
   if (unsettled.error) throw unsettled.error;
+  if (alerts.error) throw alerts.error;
   const orders = data ?? [];
   const count = (s: OrderStatus) => orders.filter((o) => o.status === s).length;
   // Oldest first in the queue, so the shop works in arrival order.
@@ -102,6 +113,8 @@ export default async function ShopDashboardPage() {
             ))}
           </dl>
 
+          <ShopAlerts alerts={alerts.data ?? []} />
+
           <h2 className="sr-only">Today</h2>
           <DailyStatsCards stats={stats} />
 
@@ -117,7 +130,7 @@ export default async function ShopDashboardPage() {
                   <OrderHeader order={o} />
                   <p className="mt-2 text-[13px] text-muted-foreground">
                     {formatPageCount(o.total_pages)} · {colourLabels[o.colour_mode]} · {paperLabels[o.paper_size]} ·{" "}
-                    {sidesLabels[o.sides]} · {o.copies} {o.copies === 1 ? "copy" : "copies"} · {o.sheets} sheets
+                    {sidesLabels[o.sides]} · {o.copies} {o.copies === 1 ? "copy" : "copies"} · {formatSheetCount(o.sheets)}
                   </p>
                   <ul className="mt-3 flex flex-col gap-1.5">
                     {o.order_files.map((f) => (

@@ -1,4 +1,4 @@
-import type { PrintShop } from "@/lib/data/print-shops";
+import type { PriceRange, PrintShop } from "@/lib/data/print-shops";
 import type { ColourMode, PageTier, PaperSize } from "@/lib/pricing";
 import { createClient } from "@/utils/supabase/server";
 
@@ -36,6 +36,17 @@ export function toFlowShops(shops: PrintShop[], pricing: PricingRow[], tiers: Ti
   });
 }
 
+/**
+ * Lowest-highest per-page rate (rupees) of one colour's tiers from
+ * public_shops.page_tiers; null without tiers or before that column exists.
+ */
+export function perPageRange(tiers: unknown, colour: ColourMode): PriceRange | null {
+  const rates = (Array.isArray(tiers) ? (tiers as { colour_mode?: unknown; price_paise?: unknown }[]) : [])
+    .filter((t) => t.colour_mode === colour && Number.isInteger(t.price_paise))
+    .map((t) => (t.price_paise as number) / 100);
+  return rates.length ? { min: Math.min(...rates), max: Math.max(...rates) } : null;
+}
+
 const serviceLabels: Record<string, string> = {
   print: "Printing",
   photocopy: "Photocopy",
@@ -66,6 +77,8 @@ export async function getPublicShops(): Promise<PrintShop[]> {
     distanceMetres: s.distance_metres,
     bwFromInr: s.bw_from_paise == null ? null : s.bw_from_paise / 100,
     colourFromInr: s.colour_from_paise == null ? null : s.colour_from_paise / 100,
+    bwPerPageInr: perPageRange(s.page_tiers, "bw"),
+    colourPerPageInr: perPageRange(s.page_tiers, "colour"),
     prepMinutes: s.prep_minutes,
     services: (s.services as string[]).map((x) => serviceLabels[x] ?? x),
   }));

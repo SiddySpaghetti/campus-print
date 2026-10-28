@@ -674,8 +674,13 @@ begin
   r := r || case when n = 4 then 'PASS student notified: accepted, printing, ready, completed' else 'FAIL notifications n=' || n end;
   select count(*) into n from public.notifications where order_id = oc3 and user_id = stu and type = 'order_rejected' and body = 'File is blank';
   r := r || case when n = 1 then 'PASS student notified of rejection with the reason' else 'FAIL rejection notification' end;
-  select count(*) into n from public.notifications where order_id in (oc1, oc3) and user_id <> stu;
-  r := r || case when n = 0 then 'PASS notifications go only to the order''s student' else 'FAIL notifications leaked n=' || n end;
+  select count(*) into n from public.notifications where order_id in (oc1, oc3) and user_id <> stu
+     and not (user_id = shk and type = 'new_order');
+  r := r || case when n = 0 then 'PASS notifications go only to the order''s student (plus the shop''s new-order alert)' else 'FAIL notifications leaked n=' || n end;
+  -- (needs 20261029120100_counter_order_notifications)
+  select count(*) into n from public.notifications where order_id in (oc1, oc3)
+     and ((user_id = stu and type = 'order_placed') or (user_id = shk and type = 'new_order'));
+  r := r || case when n = 4 then 'PASS counter orders: student told it was placed, shop alerted, once each' else 'FAIL counter order-created notices n=' || n end;
   select count(*) into n from public.files_due_for_purge(500) d join public.order_files f on f.id = d.file_id where f.order_id = oc1;
   r := r || case when n = 0 then 'PASS just-completed counter order''s file is not purged yet' else 'FAIL purged too early' end;
 

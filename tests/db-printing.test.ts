@@ -6,6 +6,7 @@
  * and service_role's default table grants). Run: npm run test:security
  */
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { before, describe, it } from "node:test";
@@ -153,7 +154,8 @@ describe("db: nobody can set PRINTING directly", () => {
       assert.equal(await shopSets(id, "PRINTING", null, STUDENT), 0);
     }
     assert.deepEqual([(await row(pending)).status, (await row(accepted)).status], ["PENDING", "ACCEPTED"]);
-    assert.deepEqual([...(await notices(pending)), ...(await notices(accepted))], []);
+    // Only the counter order's creation notices (20261029120100); nothing from the refused PATCHes.
+    assert.deepEqual([...(await notices(pending)), ...(await notices(accepted))], ["new_order", "order_placed"]);
   });
 
   it("no API role can INSERT an order that is already PRINTING (or past PENDING)", async () => {
@@ -363,5 +365,74 @@ describe("db: reject (no automatic refund), ready for pickup, collected", () => 
     assert.equal(r.status, "COMPLETED");
     assert.ok(r.ready_at && r.completed_at);
     assert.deepEqual(await notices(id), ["order_printing", "order_ready", "order_completed"]);
+  });
+});
+
+describe("db: placing an order notifies the student and the shop (counter now, online on payment)", () => {
+  /** What POST /api/orders does: create_order_verified as the service role, for an uploaded file. */
+  async function place(method: "ONLINE" | "PAY_AT_COUNTER", file = `${STUDENT}/${randomUUID()}/${randomUUID()}.pdf`) {
+    await db.query(
+      `insert into storage.objects (bucket_id, name, owner, metadata)
+       select 'print-files', $1, $2, '{"size": "1000", "mimetype": "application/pdf"}'
+        where not exists (select 1 from storage.objects where name = $1)`,
+      [file, STUDENT],
+    );
+    const files = JSON.stringify([{ storage_path: file, original_name: "a.pdf", mime_type: "application/pdf", size_bytes: 1000, page_count: 2 }]);
+    const id = await as("service_role", null, async (tx) =>
+      (await tx.query<{ id: string }>(
+        "select (public.create_order_verified($1, $2, 'bw', 'a4', 'single', 1, $3::jsonb, null, $4)).id as id",
+        [STUDENT, SHOP, files, method],
+      )).rows[0].id);
+    return { id, file };
+  }
+  const recipients = async (id: string) =>
+    (await db.query<{ who: string; type: string }>(
+      "select user_id::text as who, type from public.notifications where order_id = $1 order by type", [id])).rows;
+
+  before(() =>
+    db.exec(`insert into public.shop_pricing (shop_id, service, colour_mode, paper_size, price_paise)
+             values ('${SHOP}', 'print', 'bw', 'a4', 150) on conflict do nothing`));
+
+  it("a counter order: the student is told it was placed and the shop's keeper is alerted, once each", async () => {
+    const { id } = await place("PAY_AT_COUNTER");
+    assert.deepEqual(await recipients(id), [{ who: KEEPER, type: "new_order" }, { who: STUDENT, type: "order_placed" }]);
+    const student = (await db.query<{ title: string; body: string }>(
+      "select title, body from public.notifications where order_id = $1 and type = 'order_placed'", [id])).rows[0];
+    assert.match(student.title, /^Order S-\d{3} placed$/);
+    assert.match(student.body, /Pay at the counter/);
+  });
+
+  it("an unpaid online order gets no notice; payment confirmation arrives once, only when payment is verified", async () => {
+    const { id } = await place("ONLINE");
+    assert.deepEqual(await recipients(id), []);
+    await as("service_role", null, (tx) =>
+      tx.query("select public.attach_payment_order($1, $2, $3)", [id, STUDENT, `order_${randomUUID().replaceAll("-", "").slice(0, 20)}`]));
+    const total = Number((await row(id)).total_paise);
+    assert.equal(await paymentEvent(id, "payment.captured", total), "paid");
+    assert.equal(await paymentEvent(id, "payment.captured", total), "duplicate");
+    assert.deepEqual(await recipients(id), [{ who: KEEPER, type: "new_order" }, { who: STUDENT, type: "order_placed" }]);
+    const body = (await db.query<{ body: string }>(
+      "select body from public.notifications where order_id = $1 and type = 'order_placed'", [id])).rows[0].body;
+    assert.match(body, /^Payment received/);
+  });
+
+  it("retrying the same request returns the same order and adds no second notice", async () => {
+    const first = await place("PAY_AT_COUNTER");
+    const retry = await place("PAY_AT_COUNTER", first.file);
+    assert.equal(retry.id, first.id);
+    assert.equal((await recipients(first.id)).length, 2);
+  });
+
+  it("the keeper sees only their own alert and can mark it read; the student and other shops can't see it", async () => {
+    const { id } = await place("PAY_AT_COUNTER");
+    const seen = (who: string) =>
+      as("authenticated", who, async (tx) =>
+        (await tx.query<{ type: string }>("select type from public.notifications where order_id = $1", [id])).rows.map((r) => r.type));
+    assert.deepEqual(await seen(KEEPER), ["new_order"]);
+    assert.deepEqual(await seen(STUDENT), ["order_placed"]);
+    assert.deepEqual(await seen(OTHER_KEEPER), []);
+    const marked = await as("authenticated", KEEPER, async (tx) =>
+      (await tx.query("update public.notifications set read_at = now() where order_id = $1 and read_at is null", [id])).affectedRows);
+    assert.equal(marked, 1);
   });
 });

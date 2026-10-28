@@ -14,6 +14,9 @@ export type PrintShop = {
   bwFromInr: number | null;
   /** Cheapest colour price per page, in rupees. Null if not offered. */
   colourFromInr: number | null;
+  /** Per-page tier rates (e.g. K2's A4 B&W), lowest to highest, in rupees; shown instead of the "from" price. */
+  bwPerPageInr?: PriceRange | null;
+  colourPerPageInr?: PriceRange | null;
   /** Typical time from order to pickup, in minutes. */
   prepMinutes: number;
   services: string[];
@@ -33,6 +36,15 @@ export function formatPricePerPage(amount: number | null) {
     minimumFractionDigits: hasPaise ? 2 : 0,
     maximumFractionDigits: 2,
   }).format(amount);
+}
+
+/** Lowest and highest of a set of per-page rates, in rupees. */
+export type PriceRange = { min: number; max: number };
+
+/** "₹2–₹5/page", or "₹2/page" when every tier costs the same. */
+export function formatPerPageRange({ min, max }: PriceRange) {
+  const range = min === max ? formatPricePerPage(min) : `${formatPricePerPage(min)}–${formatPricePerPage(max)}`;
+  return `${range}/page`;
 }
 
 export function formatDistance(metres: number) {

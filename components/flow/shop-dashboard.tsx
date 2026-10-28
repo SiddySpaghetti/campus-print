@@ -1,5 +1,6 @@
 import { ChevronDown } from "lucide-react";
 
+import { MarkAllReadButton } from "@/components/flow/order-actions";
 import type { OrderStatus } from "@/components/flow/order-tracker";
 import { buttonVariants } from "@/components/ui/button";
 import { formatOrderDate, orderLabel, paymentLabel, statusLabels } from "@/lib/orders";
@@ -19,6 +20,38 @@ export type DashboardOrder = {
   paid_at?: string | null;
   cancelled_at?: string | null;
 };
+
+export type ShopAlert = { id: string; type: string; title: string; body: string | null; created_at: string };
+
+/**
+ * The shopkeeper's unread notifications (new orders, payments after a
+ * cancellation), newest first, until marked read. The page auto-refreshes, so
+ * a new order shows up here without a reload.
+ */
+export function ShopAlerts({ alerts }: { alerts: ShopAlert[] }) {
+  if (alerts.length === 0) return null;
+  return (
+    <section aria-labelledby="shop-alerts" className="mt-8 rounded-card border border-ink/20 bg-accent/15 p-4 md:p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 id="shop-alerts" className="text-lg font-semibold text-ink">
+          New alerts ({alerts.length})
+        </h2>
+        <MarkAllReadButton />
+      </div>
+      <ul className="mt-3 flex flex-col gap-2">
+        {alerts.map((a) => (
+          <li key={a.id} className="text-[14px]">
+            <span className="font-medium text-ink">{a.title}</span>
+            {a.body ? <span className="text-muted-foreground"> · {a.body}</span> : null}
+            <span className="ml-2 font-mono text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
+              {formatOrderDate(a.created_at)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
 
 /** null = the read failed. Say so rather than show 0 / ₹0. */
 export function DailyStatsCards({ stats }: { stats: DailyStats | null }) {

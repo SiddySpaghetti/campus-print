@@ -1,6 +1,6 @@
 import { errorResponse, handle, logServerError, SAFE } from "@/lib/server/errors";
 import { clientKey, rateLimit } from "@/lib/server/rate-limit";
-import { parsePaymentEvent, razorpayAccounts, verifyWebhookSignature } from "@/lib/server/razorpay";
+import { HANDLED_EVENTS, parsePaymentEvent, razorpayAccounts, verifyWebhookSignature } from "@/lib/server/razorpay";
 import { createAdminClient } from "@/utils/supabase/admin";
 
 /** process_payment_event outcomes that need manual reconciliation. */
@@ -68,6 +68,10 @@ export function POST(request: Request) {
     }
     const event = parsePaymentEvent(body);
     if (!event) return errorResponse(SAFE.badRequest);
+    // Signed, but not an event we act on (e.g. payment.authorized): acknowledge it
+    // so Razorpay stops retrying. It carries no order ids, so reconciling it
+    // could only log a false "unknown_order".
+    if (!HANDLED_EVENTS.has(event.eventType)) return Response.json({ received: true });
 
     const admin = createAdminClient();
 

@@ -54,7 +54,8 @@ export function Hero() {
 
         <p className="mt-6 max-w-[34rem] text-base leading-relaxed text-muted-foreground text-pretty md:text-lg">
           Upload your documents, choose your print settings, and pick them up
-          when they&apos;re ready. Pay at the counter when you collect.
+          when they&apos;re ready. Pay online at shops that offer it; at other shops,
+          pay at the counter when you collect.
         </p>
 
         <div className="mt-8 flex w-full flex-col gap-3 sm:w-auto sm:flex-row">

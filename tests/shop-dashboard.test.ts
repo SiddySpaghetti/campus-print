@@ -6,8 +6,23 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { DailyStatsCards, RecentlyClosed, type DashboardOrder } from "../components/flow/shop-dashboard";
+import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
+
+import { DailyStatsCards, RecentlyClosed, ShopAlerts, type DashboardOrder } from "../components/flow/shop-dashboard";
 import { dailyStats, istDayBounds, loadDailyStats, type StatsRow } from "../lib/shop-stats";
+
+describe("new-order alerts", () => {
+  it("are shown on the dashboard, with a way to mark them read; nothing renders without any", () => {
+    const alert = { id: "n1", type: "new_order", title: "New order S-007", body: "Pay at the counter. Accept it to start printing.",
+      created_at: "2026-10-29T04:00:00Z" };
+    const html = renderToStaticMarkup(
+      createElement(AppRouterContext.Provider, { value: {} as never }, createElement(ShopAlerts, { alerts: [alert] })));
+    for (const text of ["New alerts (1)", "New order S-007", "Accept it to start printing", "Mark all as read"]) {
+      assert.ok(html.includes(text), text);
+    }
+    assert.equal(renderToStaticMarkup(createElement(ShopAlerts, { alerts: [] })), "");
+  });
+});
 
 const SHOP = "shop-a";
 const NOW = new Date("2026-10-21T10:00:00Z"); // 15:30 IST, 21 Oct

@@ -117,7 +117,8 @@ export type ParsedPaymentEvent = {
   payload: Record<string, unknown>;
 };
 
-const HANDLED = new Set(["payment.captured", "payment.failed", "order.paid", "refund.processed", "refund.failed"]);
+/** The only events that can change an order; anything else is acknowledged and ignored. */
+export const HANDLED_EVENTS = new Set(["payment.captured", "payment.failed", "order.paid", "refund.processed", "refund.failed"]);
 
 /** Pulls only the fields we act on out of Razorpay's envelope. */
 export function parsePaymentEvent(body: unknown): ParsedPaymentEvent | null {
@@ -126,7 +127,7 @@ export function parsePaymentEvent(body: unknown): ParsedPaymentEvent | null {
     event?: unknown;
     payload?: Record<string, { entity?: Record<string, unknown> } | undefined>;
   };
-  if (typeof b.event !== "string" || !HANDLED.has(b.event)) {
+  if (typeof b.event !== "string" || !HANDLED_EVENTS.has(b.event)) {
     return typeof b.event === "string"
       ? { eventType: b.event, paymentOrderId: null, paymentId: null, amountPaise: null, currency: null, payload: { event: b.event } }
       : null;

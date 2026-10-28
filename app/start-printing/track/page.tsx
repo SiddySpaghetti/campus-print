@@ -137,7 +137,7 @@ export default async function TrackPage({ searchParams }: PageProps<"/start-prin
         </div>
 
         <div className="flex flex-col gap-5">
-          <OrderTracker status={order.status} />
+          <OrderTracker status={order.status} online={!atCounter} />
           {order.status_reason ? (
             <p className="text-[13px] text-muted-foreground">Reason: {order.status_reason}</p>
           ) : null}

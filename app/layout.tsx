@@ -19,7 +19,7 @@ const bricolage = Bricolage_Grotesque({
 });
 
 const description =
-  "Upload your documents, choose your print settings, and pick them up from a campus print shop when they're ready. Pay at the counter when you collect.";
+  "Upload your documents, choose your print settings, and pick them up from a campus print shop when they're ready. Pay online at shops that offer it; at other shops, pay at the counter when you collect.";
 
 // Set automatically by Vercel (production domain, no protocol); local builds fall back.
 const productionHost = process.env.VERCEL_PROJECT_PRODUCTION_URL;
