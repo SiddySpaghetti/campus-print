@@ -1,6 +1,6 @@
 import { FileText } from "lucide-react";
 
-import { AutoRefresh, DownloadFileButton, ShopStatusActions } from "@/components/flow/order-actions";
+import { AutoRefresh, DownloadFileButton, ShopOpenToggle, ShopStatusActions } from "@/components/flow/order-actions";
 import type { OrderStatus } from "@/components/flow/order-tracker";
 import {
   DailyStatsCards,
@@ -99,7 +99,7 @@ export default async function ShopDashboardPage() {
         <Container className="pb-16 pt-8 md:pt-12">
           <div className="flex flex-wrap items-baseline justify-between gap-3">
             <h1 className="font-display text-3xl font-semibold tracking-[-0.02em] text-ink">{shop?.name ?? "Your shop"}</h1>
-            <span className="text-[13px] text-muted-foreground">{shop?.is_open ? "Open for orders" : "Closed to new orders"}</span>
+            {shop ? <ShopOpenToggle isOpen={shop.is_open} /> : null}
           </div>
 
           <h2 className="sr-only">Today</h2>

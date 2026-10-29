@@ -27,6 +27,7 @@ import {
   isUuid,
   parseCreateOrder,
   parseUploadRequest,
+  parseShopOpen,
   parseStatusChange,
   safeNextPath,
 } from "../lib/server/validate";
@@ -131,6 +132,12 @@ describe("input validation", () => {
 });
 
 describe("shop status changes", () => {
+  it("open/close takes exactly one boolean", () => {
+    assert.deepEqual(parseShopOpen({ open: false }), { open: false });
+    for (const body of [{}, { open: "true" }, { open: 1 }, { open: true, is_verified: true }, null, [true]]) {
+      assert.throws(() => parseShopOpen(body), ValidationError);
+    }
+  });
   it("accepts forward moves without a reason", () => {
     for (const status of ["ACCEPTED", "READY", "COMPLETED"]) {
       assert.deepEqual(parseStatusChange({ status }), { status, reason: null });

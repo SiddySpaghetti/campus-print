@@ -262,6 +262,22 @@ describe("db: reject (no automatic refund), ready for pickup, collected", () => 
     const r = await row(id);
     assert.deepEqual([r.payment_status, r.refunded_paise], ["PAID", 300]);
     assert.equal(await paymentEvent(id, "refund.processed", 300), "refund_unverified"); // no Razorpay refund id
+    // Fully refunded (though still PAID): a full-refund notice, never "partial … ₹0.00 not refunded".
+    const sent = (await db.query<{ type: string; body: string }>(
+      "select type, body from public.notifications where order_id = $1 and type like 'refund%'", [id])).rows;
+    assert.deepEqual(sent, [{ type: "refund_issued", body: "Your money is on its way back to you." }]);
+  });
+
+  it("a partial refund on a live (PAID) order still says how much is outstanding, then the rest says refunded", async () => {
+    const id = await newOrder({}); // total 300
+    assert.equal(await paymentEvent(id, "refund.processed", 100, "rfnd_LiveP001"), "refund_on_paid_order");
+    assert.equal(await paymentEvent(id, "refund.processed", 200, "rfnd_LiveP002"), "refund_on_paid_order");
+    const r = await row(id);
+    assert.deepEqual([r.payment_status, r.refunded_paise], ["PAID", 300]); // calculation unchanged
+    const sent = (await db.query<{ type: string; body: string }>(
+      "select type, body from public.notifications where order_id = $1 and type like 'refund%' order by created_at, type", [id])).rows;
+    assert.deepEqual(sent.map((n) => n.type), ["refund_partial", "refund_issued"]);
+    assert.ok(sent[0].body.includes("₹1.00") && sent[0].body.includes("₹2.00 of your payment has not been refunded"));
   });
 
   it("partial refunds: never REFUNDED until verified refunds cover the total; same refund id counted once", async () => {

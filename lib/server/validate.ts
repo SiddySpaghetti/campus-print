@@ -174,6 +174,13 @@ export function parseStatusChange(body: unknown): { status: ShopTargetStatus; re
   return { status, reason: needsReason ? reason : null };
 }
 
+export function parseShopOpen(body: unknown): { open: boolean } {
+  const b = asObject(body);
+  exactKeys(b, ["open"]);
+  if (typeof b.open !== "boolean") throw new ValidationError("open must be true or false");
+  return { open: b.open };
+}
+
 /**
  * Post-login redirect target. Same-origin relative paths only, so a crafted
  * `?next=` can't bounce a freshly signed-in user to another site.

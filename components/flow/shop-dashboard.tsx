@@ -111,16 +111,18 @@ export function RecentlyClosed({ orders }: { orders: DashboardOrder[] }) {
 /**
  * Every paid order of this shop that was cancelled or rejected and has no
  * Razorpay-confirmed refund (REFUND_PENDING), however old: never just the
- * latest few, so none drops out of sight before it is settled.
+ * latest few, so none drops out of sight before it is settled. Behind a
+ * button like RecentlyClosed; the count on it keeps them visible.
  */
 export function PaidNotCompleted({ orders }: { orders: DashboardOrder[] }) {
   if (orders.length === 0) return null;
   return (
-    <section aria-labelledby="paid-not-completed" className="mt-10">
-      <h2 id="paid-not-completed" className="text-lg font-semibold text-ink">
+    <details className="group mt-10">
+      <summary className={buttonVariants({ variant: "outline", className: "list-none [&::-webkit-details-marker]:hidden" })}>
         Paid, not completed ({orders.length})
-      </h2>
-      <p className="mt-1 text-[13px] text-muted-foreground">
+        <ChevronDown aria-hidden="true" className="transition-transform group-open:rotate-180" />
+      </summary>
+      <p className="mt-3 text-[13px] text-muted-foreground">
         These were paid online, then cancelled or rejected. Nothing has been refunded automatically: settle each one
         with the student. If you refund it in your Razorpay dashboard, it shows as Refunded here once Razorpay confirms.
       </p>
@@ -137,7 +139,7 @@ export function PaidNotCompleted({ orders }: { orders: DashboardOrder[] }) {
           </li>
         ))}
       </ul>
-    </section>
+    </details>
   );
 }
 

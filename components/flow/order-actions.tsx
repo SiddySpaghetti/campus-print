@@ -295,6 +295,43 @@ export function ShopStatusActions({
   );
 }
 
+/** The shop's open/closed switch: closed stops new orders, placed ones carry on. */
+export function ShopOpenToggle({ isOpen }: { isOpen: boolean }) {
+  const router = useRouter();
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const toggle = async () => {
+    if (isOpen && !window.confirm("Close the shop? Students can't place new orders until you open it again.")) return;
+    setPending(true);
+    setError(null);
+    try {
+      await postJson("/api/shop/open", { open: !isOpen });
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't change the shop's status.");
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <div className="flex items-center gap-3">
+        <span className="text-[13px] text-muted-foreground">{isOpen ? "Open for orders" : "Closed to new orders"}</span>
+        <Button type="button" variant={isOpen ? "outline" : "default"} size="sm" disabled={pending} onClick={toggle}>
+          {pending ? "Saving…" : isOpen ? "Close shop" : "Open shop"}
+        </Button>
+      </div>
+      {error ? (
+        <p role="alert" className="text-[13px] font-medium text-destructive">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 /** Marks every unread notification as read, then refreshes the badge. */
 export function MarkAllReadButton() {
   const router = useRouter();

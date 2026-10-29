@@ -38,10 +38,20 @@ const headline: Record<OrderStatus, string> = {
 /**
  * Shows the order's real status as stored in the database. Paid online orders
  * skip Accept (the shop's download starts printing), so `online` drops that
- * step — unless an older online order really is ACCEPTED.
+ * step — unless an older online order really is ACCEPTED. An unpaid online
+ * order is invisible to the shop (RLS), so it waits for payment, not the shop.
  */
-export function OrderTracker({ status, online = false }: { status: OrderStatus; online?: boolean }) {
+export function OrderTracker({
+  status,
+  online = false,
+  awaitingPayment = false,
+}: {
+  status: OrderStatus;
+  online?: boolean;
+  awaitingPayment?: boolean;
+}) {
   const reduced = useReducedMotion();
+  const title = awaitingPayment && status === "PENDING" ? "Waiting for payment" : headline[status];
   const ended = status === "CANCELLED" || status === "REJECTED";
   const done = status === "READY" || status === "COMPLETED";
   const steps =
@@ -63,7 +73,7 @@ export function OrderTracker({ status, online = false }: { status: OrderStatus; 
             </p>
             <AnimatePresence initial={false} mode="popLayout">
               <motion.p
-                key={status}
+                key={title}
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -12 }}
@@ -71,7 +81,7 @@ export function OrderTracker({ status, online = false }: { status: OrderStatus; 
                 className="mt-1 font-display text-2xl font-semibold tracking-[-0.025em] text-ink md:text-3xl"
                 aria-live="polite"
               >
-                {headline[status]}
+                {title}
               </motion.p>
             </AnimatePresence>
           </div>

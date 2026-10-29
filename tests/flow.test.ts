@@ -1,10 +1,14 @@
-/** Student flow logic: price estimate, step access, landing links. Run: npm run test:security */
+/** Student flow logic: price estimate, step access, tracking headline, landing links. Run: npm run test:security */
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+
+import { OrderTracker } from "../components/flow/order-tracker";
 import { stepDisposition } from "../lib/flow-access";
 import { calculatePrice, defaultPrintOptions } from "../lib/pricing";
 import type { FlowShop } from "../lib/shops";
@@ -31,6 +35,18 @@ describe("step access", () => {
   });
   it("can't skip ahead", () => {
     assert.equal(stepDisposition("review", { hasShop: true, hasFile: false, placed: false }), "send-to-start");
+  });
+});
+
+describe("tracking headline", () => {
+  it("an unpaid online order waits for payment, not for the shop (which can't see it yet)", () => {
+    const render = (props: Parameters<typeof OrderTracker>[0]) => renderToStaticMarkup(createElement(OrderTracker, props));
+    const unpaid = render({ status: "PENDING", online: true, awaitingPayment: true });
+    assert.ok(unpaid.includes("Waiting for payment"));
+    assert.equal(unpaid.includes("Waiting for the shop"), false);
+    assert.ok(render({ status: "PENDING", online: true }).includes("Waiting for the shop")); // paid online
+    assert.ok(render({ status: "PENDING" }).includes("Waiting for the shop")); // pay at counter
+    assert.ok(render({ status: "CANCELLED", online: true, awaitingPayment: true }).includes("Cancelled"));
   });
 });
 

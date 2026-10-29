@@ -382,11 +382,13 @@ describe("ready for pickup and collected", () => {
     }
   });
 
-  it("the shop sees every paid-not-completed order, with the reason, until it is settled", () => {
+  it("the shop sees every paid-not-completed order behind a counted button, until it is settled", () => {
     const o = { id: id(5), order_number: "S-005", status: "CANCELLED" as const, status_reason: "Printer broke",
       payment_status: "REFUND_PENDING", payment_method: "ONLINE", total_paise: 300, created_at: "2026-10-25T04:00:00Z" };
     const html = renderToStaticMarkup(createElement(PaidNotCompleted, { orders: [o] }));
-    for (const text of ["Paid, not completed (1)", "#S-005", "Paid · not completed", "Reason: Printer broke", "settle each one"]) {
+    assert.match(html, /^<details[^>]*><summary[^>]*>Paid, not completed \(1\)/);
+    assert.equal(html.includes("<details open"), false);
+    for (const text of ["#S-005", "Paid · not completed", "Reason: Printer broke", "settle each one"]) {
       assert.ok(html.includes(text), text);
     }
     assert.equal(renderToStaticMarkup(createElement(PaidNotCompleted, { orders: [] })), "");
