@@ -63,7 +63,8 @@ commit;
 
 
 -- Forward again (after the fix is redeployed) ----------------------------------
--- After A:  supabase migration repair --status reverted 20261025120100
+-- After A:  supabase migration repair --status reverted 20261025120100 20261029120000
+--           (A drops the function 20261029120000 revokes on)
 --           supabase db push --include-all     (it sorts before applied ones)
 -- After B:  re-run the pilot data, exactly as 20261025120300 does:
 begin;
