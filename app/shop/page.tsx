@@ -13,7 +13,6 @@ import {
 } from "@/components/flow/shop-dashboard";
 import { Container } from "@/components/shared/section";
 import { StaffHeader } from "@/components/shared/staff-header";
-import { statusLabels } from "@/lib/orders";
 import { formatPageCount, formatSheetCount } from "@/lib/page-count";
 import { colourLabels, paperLabels, sidesLabels, type ColourMode, type PaperSize, type SideMode } from "@/lib/pricing";
 import { requireRolePage } from "@/lib/server/auth";
@@ -88,7 +87,6 @@ export default async function ShopDashboardPage() {
   if (unsettled.error) throw unsettled.error;
   if (alerts.error) throw alerts.error;
   const orders = data ?? [];
-  const count = (s: OrderStatus) => orders.filter((o) => o.status === s).length;
   // Oldest first in the queue, so the shop works in arrival order.
   const active = orders.filter((o) => ACTIVE.includes(o.status)).reverse();
   const closed = orders.filter((o) => CLOSED.includes(o.status)).slice(0, 30);
@@ -104,19 +102,10 @@ export default async function ShopDashboardPage() {
             <span className="text-[13px] text-muted-foreground">{shop?.is_open ? "Open for orders" : "Closed to new orders"}</span>
           </div>
 
-          <dl className="mt-6 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
-            {[...ACTIVE, ...CLOSED].map((s) => (
-              <div key={s} className="rounded-card border border-line bg-card p-3">
-                <dt className="text-[12px] text-muted-foreground">{statusLabels[s]}</dt>
-                <dd className="font-mono text-xl font-semibold text-ink">{count(s)}</dd>
-              </div>
-            ))}
-          </dl>
-
-          <ShopAlerts alerts={alerts.data ?? []} />
-
           <h2 className="sr-only">Today</h2>
           <DailyStatsCards stats={stats} />
+
+          <ShopAlerts alerts={alerts.data ?? []} />
 
           <h2 className="mt-10 text-lg font-semibold text-ink">Active orders</h2>
           {active.length === 0 ? (

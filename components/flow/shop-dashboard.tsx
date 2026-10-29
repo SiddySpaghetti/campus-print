@@ -57,7 +57,7 @@ export function ShopAlerts({ alerts }: { alerts: ShopAlert[] }) {
 export function DailyStatsCards({ stats }: { stats: DailyStats | null }) {
   if (!stats) {
     return (
-      <p role="alert" className="mt-3 rounded-card border border-line bg-card p-4 text-[14px] text-muted-foreground">
+      <p role="alert" className="mt-6 rounded-card border border-line bg-card p-4 text-[14px] text-muted-foreground">
         Couldn&apos;t load today&apos;s totals.{" "}
         <a href="/shop" className="font-medium text-ink underline decoration-line underline-offset-4 hover:decoration-ink">
           Retry
@@ -67,10 +67,10 @@ export function DailyStatsCards({ stats }: { stats: DailyStats | null }) {
   }
   const cards = [
     { label: "Pages printed today", value: stats.pagesPrinted.toLocaleString("en-IN"), hint: "Orders marked ready today" },
-    { label: "Completed order value today", value: formatRupees(stats.completedPaise / 100), hint: "Orders collected today" },
+    { label: "Amount collected today", value: formatRupees(stats.completedPaise / 100), hint: "Orders collected today" },
   ];
   return (
-    <dl className="mt-3 grid grid-cols-2 gap-2">
+    <dl className="mt-6 grid grid-cols-2 gap-2">
       {cards.map((c) => (
         <div key={c.label} className="min-w-0 rounded-card border border-line bg-card p-4">
           <dt className="text-[13px] font-medium text-ink">{c.label}</dt>

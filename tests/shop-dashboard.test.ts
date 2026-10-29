@@ -136,7 +136,7 @@ describe("dashboard UI", () => {
   });
   it("stats cards show pages and rupees", () => {
     const html = renderToStaticMarkup(createElement(DailyStatsCards, { stats: { pagesPrinted: 1234, completedPaise: 1250_00 } }));
-    for (const text of ["Pages printed today", "1,234", "Completed order value today", "₹1,250"]) assert.ok(html.includes(text), `missing ${text}`);
+    for (const text of ["Pages printed today", "1,234", "Amount collected today", "₹1,250"]) assert.ok(html.includes(text), `missing ${text}`);
   });
   it("a failed stats read shows an error with retry, never ₹0", () => {
     const html = renderToStaticMarkup(createElement(DailyStatsCards, { stats: null }));
