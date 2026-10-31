@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { ChevronDown } from "lucide-react";
 
 import { MarkAllReadButton } from "@/components/flow/order-actions";
@@ -82,17 +83,23 @@ export function DailyStatsCards({ stats }: { stats: DailyStats | null }) {
   );
 }
 
-/** Collapsed by default; native <details> gives keyboard + screen-reader expanded state. */
-export function RecentlyClosed({ orders }: { orders: DashboardOrder[] }) {
+/**
+ * Collapsed by default; native <details> gives keyboard + screen-reader
+ * expanded state. Paged through `/shop?closed=<page>`: a later page opens
+ * expanded, since the shopkeeper got there from inside the list.
+ */
+export function RecentlyClosed({ orders, page = 0, hasOlder = false }: { orders: DashboardOrder[]; page?: number; hasOlder?: boolean }) {
+  const pageLink = (p: number) => (p === 0 ? "/shop#closed" : `/shop?closed=${p}#closed`);
+  const navLink = "font-medium text-ink underline decoration-line underline-offset-4 hover:decoration-ink";
   return (
-    <details className="group mt-10">
-      <summary className={buttonVariants({ variant: "outline", className: "list-none [&::-webkit-details-marker]:hidden" })}>
-        Recently closed ({orders.length})
+    <details className="group mt-10" open={page > 0}>
+      <summary id="closed" className={buttonVariants({ variant: "outline", className: "list-none [&::-webkit-details-marker]:hidden" })}>
+        {`Recently closed (${orders.length}${hasOlder ? "+" : ""})`}
         <ChevronDown aria-hidden="true" className="transition-transform group-open:rotate-180" />
       </summary>
       {orders.length === 0 ? (
         <p className="mt-3 rounded-card border border-line bg-card p-5 text-[14px] text-muted-foreground">
-          No closed orders yet. Collected, cancelled and rejected orders appear here.
+          {page === 0 ? "No closed orders yet. Collected, cancelled and rejected orders appear here." : "No older closed orders."}
         </p>
       ) : (
         <ul className="mt-3 flex flex-col gap-2">
@@ -104,7 +111,25 @@ export function RecentlyClosed({ orders }: { orders: DashboardOrder[] }) {
           ))}
         </ul>
       )}
+      {page > 0 || hasOlder ? (
+        <nav aria-label="Closed orders pages" className="mt-3 flex items-center justify-between gap-3 text-[14px]">
+          {page > 0 ? <Link href={pageLink(page - 1)} className={navLink}>Newer</Link> : <span />}
+          <span className="text-muted-foreground">Page {page + 1}</span>
+          {hasOlder ? <Link href={pageLink(page + 1)} className={navLink}>Older</Link> : <span />}
+        </nav>
+      ) : null}
     </details>
+  );
+}
+
+/** Same footprint as DailyStatsCards, so the queue below doesn't jump when the totals arrive. */
+export function DailyStatsSkeleton() {
+  return (
+    <div aria-busy="true" aria-label="Loading today's totals" className="mt-6 grid grid-cols-2 gap-2">
+      {[0, 1].map((i) => (
+        <div key={i} className="h-[106px] animate-pulse rounded-card border border-line bg-card" />
+      ))}
+    </div>
   );
 }
 

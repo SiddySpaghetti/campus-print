@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Section } from "@/components/shared/section";
 import { HeroHeadline } from "@/components/landing/hero-headline";
 import { HeroTicket } from "@/components/landing/hero-ticket";
-import { CrowdCanvas } from "@/components/ui/skiper39";
+import { CrowdBackdrop } from "@/components/landing/crowd-backdrop";
 import { siteConfig } from "@/lib/site";
 
 // Open Peeps sprite sheet (15 × 7 people) used by Skiper UI's Crowd Canvas.
@@ -34,7 +34,7 @@ export function Hero() {
           } as React.CSSProperties
         }
       >
-        <CrowdCanvas
+        <CrowdBackdrop
           src={CROWD_SPRITES}
           rows={15}
           cols={7}

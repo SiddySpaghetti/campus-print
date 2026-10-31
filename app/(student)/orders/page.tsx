@@ -37,19 +37,19 @@ export const metadata = { title: "My orders" };
 export default async function MyOrdersPage() {
   const { supabase } = await requireStudentPage("/orders");
 
-  const { data, error } = await supabase
-    .from("orders")
-    .select("id, order_number, shop_id, status, payment_status, payment_method, colour_mode, paper_size, sides, copies, total_pages, total_paise, created_at")
-    .order("created_at", { ascending: false })
-    .limit(50)
-    .returns<OrderRow[]>();
+  // Shop names in parallel, not after the orders: public_shops is the
+  // handful of verified campus shops, cheaper than a second round trip.
+  const [{ data, error }, { data: shops }] = await Promise.all([
+    supabase
+      .from("orders")
+      .select("id, order_number, shop_id, status, payment_status, payment_method, colour_mode, paper_size, sides, copies, total_pages, total_paise, created_at")
+      .order("created_at", { ascending: false })
+      .limit(50)
+      .returns<OrderRow[]>(),
+    supabase.from("public_shops").select("id, name"),
+  ]);
   if (error) throw error;
   const orders = data ?? [];
-
-  const shopIds = [...new Set(orders.map((o) => o.shop_id))];
-  const { data: shops } = shopIds.length
-    ? await supabase.from("public_shops").select("id, name").in("id", shopIds)
-    : { data: [] };
   const shopName = new Map((shops ?? []).map((s) => [s.id as string, s.name as string]));
 
   return (

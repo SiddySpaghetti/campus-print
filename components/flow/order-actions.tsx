@@ -1,19 +1,57 @@
 "use client";
 
-import { useEffect, useState, useTransition, type ReactNode } from "react";
+import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
 import { postJson } from "@/lib/api-client";
 
-/** Re-renders the server page (and the header's unread badge) every 15s. */
+type VisibilityTarget = Pick<Document, "visibilityState" | "addEventListener" | "removeEventListener">;
+
+/**
+ * Calls `tick` every `ms` while the tab is visible. Hidden tabs don't tick;
+ * coming back ticks once, then the interval starts over. Returns the cleanup.
+ */
+export function pollWhileVisible(tick: () => void, ms: number, doc: VisibilityTarget = document) {
+  let hidden = doc.visibilityState === "hidden";
+  let timer = hidden ? undefined : setInterval(tick, ms);
+  const onChange = () => {
+    if ((doc.visibilityState === "hidden") === hidden) return;
+    hidden = !hidden;
+    clearInterval(timer);
+    timer = undefined;
+    if (!hidden) {
+      tick();
+      timer = setInterval(tick, ms);
+    }
+  };
+  doc.addEventListener("visibilitychange", onChange);
+  return () => {
+    clearInterval(timer);
+    doc.removeEventListener("visibilitychange", onChange);
+  };
+}
+
+/**
+ * Re-renders the server page (and the header's unread badge) every 15s while
+ * the tab is visible, and once on return to it. A tick is skipped while the
+ * previous refresh is still in flight.
+ */
 export function AutoRefresh() {
   const router = useRouter();
+  const [refreshing, startTransition] = useTransition();
+  const busy = useRef(false);
   useEffect(() => {
+    busy.current = refreshing;
+  }, [refreshing]);
+  useEffect(
     // ponytail: polling; switch to Supabase Realtime on orders if 15s feels slow.
-    const timer = setInterval(() => router.refresh(), 15_000);
-    return () => clearInterval(timer);
-  }, [router]);
+    () =>
+      pollWhileVisible(() => {
+        if (!busy.current) startTransition(() => router.refresh());
+      }, 15_000),
+    [router],
+  );
   return null;
 }
 

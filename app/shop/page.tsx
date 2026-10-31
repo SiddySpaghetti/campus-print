@@ -1,9 +1,10 @@
+import { Suspense } from "react";
 import { FileText } from "lucide-react";
 
 import { AutoRefresh, DownloadFileButton, ShopOpenToggle, ShopStatusActions } from "@/components/flow/order-actions";
-import type { OrderStatus } from "@/components/flow/order-tracker";
 import {
   DailyStatsCards,
+  DailyStatsSkeleton,
   OrderHeader,
   PaidNotCompleted,
   RecentlyClosed,
@@ -14,31 +15,10 @@ import {
 import { Container } from "@/components/shared/section";
 import { StaffHeader } from "@/components/shared/staff-header";
 import { formatPageCount, formatSheetCount } from "@/lib/page-count";
-import { colourLabels, paperLabels, sidesLabels, type ColourMode, type PaperSize, type SideMode } from "@/lib/pricing";
+import { colourLabels, paperLabels, sidesLabels } from "@/lib/pricing";
 import { requireRolePage } from "@/lib/server/auth";
-import { loadDailyStats } from "@/lib/shop-stats";
-
-type ShopOrder = {
-  id: string;
-  order_number: string | null;
-  status: OrderStatus;
-  status_reason: string | null;
-  payment_status: string;
-  payment_method: string;
-  colour_mode: ColourMode;
-  paper_size: PaperSize;
-  sides: SideMode;
-  copies: number;
-  total_pages: number;
-  sheets: number;
-  total_paise: number;
-  student_note: string | null;
-  created_at: string;
-  order_files: { id: string; original_name: string; page_count: number; size_bytes: number; file_deleted_at: string | null }[];
-};
-
-const ACTIVE: OrderStatus[] = ["PENDING", "ACCEPTED", "PRINTING", "READY"];
-const CLOSED: OrderStatus[] = ["COMPLETED", "CANCELLED", "REJECTED"];
+import { closedPageParam, loadActiveOrders, loadClosedOrders, type ClosedPage } from "@/lib/shop-queue";
+import { loadDailyStats, type DailyStats } from "@/lib/shop-stats";
 
 export const metadata = { title: "Shop dashboard" };
 
@@ -47,25 +27,23 @@ export const metadata = { title: "Shop dashboard" };
  * (orders_select_shop, order_files_select_shop, shops_select_own_shop) limits
  * it to their own shop, so another shop's orders can't appear here. Students
  * are identified only by order number — shops can't read student profiles.
+ *
+ * The queue renders first; today's totals and the closed list are started at
+ * the same time but stream in behind their own Suspense boundaries.
  */
-export default async function ShopDashboardPage() {
+export default async function ShopDashboardPage({ searchParams }: PageProps<"/shop">) {
   const { supabase, user, shopId } = await requireRolePage("shopkeeper", "/shop");
+  const closedPage = closedPageParam((await searchParams).closed);
 
   // The shop comes from the signed-in profile, never from the request; RLS
-  // limits every read below to that shop as well.
-  const [{ data: shop }, { data, error }, stats, unsettled, alerts] = await Promise.all([
+  // limits every read below to that shop as well. Neither of these rejects
+  // (failures come back as values), so starting them early is safe.
+  const stats = shopId ? loadDailyStats(supabase, shopId) : Promise.resolve(null);
+  const closed = loadClosedOrders(supabase, shopId, closedPage);
+  const [{ data: shop }, active, unsettled, alerts] = await Promise.all([
     supabase.from("shops").select("name, is_open").eq("id", shopId).maybeSingle(),
-    supabase
-      .from("orders")
-      .select(
-        "id, order_number, status, status_reason, payment_status, payment_method, colour_mode, paper_size, sides, copies, total_pages, sheets, total_paise, student_note, created_at, order_files(id, original_name, page_count, size_bytes, file_deleted_at)",
-      )
-      .eq("shop_id", shopId)
-      .order("created_at", { ascending: false })
-      .limit(200)
-      .returns<ShopOrder[]>(),
-    shopId ? loadDailyStats(supabase, shopId) : null,
-    // All of them, not capped by the 200 above: these must stay visible until settled.
+    loadActiveOrders(supabase, shopId),
+    // All of them, however old: these must stay visible until settled.
     supabase
       .from("orders")
       .select("id, order_number, status, status_reason, payment_status, payment_method, total_paise, created_at, paid_at, cancelled_at")
@@ -83,13 +61,8 @@ export default async function ShopDashboardPage() {
       .returns<ShopAlert[]>(),
   ]);
   // A failed read must not look like an empty queue: app/error.tsx shows a retry.
-  if (error) throw error;
   if (unsettled.error) throw unsettled.error;
   if (alerts.error) throw alerts.error;
-  const orders = data ?? [];
-  // Oldest first in the queue, so the shop works in arrival order.
-  const active = orders.filter((o) => ACTIVE.includes(o.status)).reverse();
-  const closed = orders.filter((o) => CLOSED.includes(o.status)).slice(0, 30);
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -103,7 +76,9 @@ export default async function ShopDashboardPage() {
           </div>
 
           <h2 className="sr-only">Today</h2>
-          <DailyStatsCards stats={stats} />
+          <Suspense fallback={<DailyStatsSkeleton />}>
+            <TodayStats stats={stats} />
+          </Suspense>
 
           <ShopAlerts alerts={alerts.data ?? []} />
 
@@ -157,9 +132,21 @@ export default async function ShopDashboardPage() {
           )}
 
           <PaidNotCompleted orders={unsettled.data ?? []} />
-          <RecentlyClosed orders={closed} />
+          <Suspense fallback={<div aria-busy="true" aria-label="Loading closed orders" className="mt-10 h-10 w-48 animate-pulse rounded-full border border-line bg-card" />}>
+            <ClosedOrders closed={closed} page={closedPage} />
+          </Suspense>
         </Container>
       </main>
     </div>
   );
+}
+
+async function TodayStats({ stats }: { stats: Promise<DailyStats | null> }) {
+  return <DailyStatsCards stats={await stats} />;
+}
+
+async function ClosedOrders({ closed, page }: { closed: Promise<ClosedPage>; page: number }) {
+  const { orders, hasOlder, error } = await closed;
+  if (error) throw error;
+  return <RecentlyClosed orders={orders} page={page} hasOlder={hasOlder} />;
 }

@@ -1,6 +1,6 @@
 /** Shop dashboard: today's totals and the recently-closed toggle. Run: npm run test:security */
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { describe, it, mock } from "node:test";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createElement } from "react";
@@ -8,7 +8,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
 
+import { pollWhileVisible } from "../components/flow/order-actions";
 import { DailyStatsCards, RecentlyClosed, ShopAlerts, type DashboardOrder } from "../components/flow/shop-dashboard";
+import { ACTIVE_PAGE, CLOSED_PAGE, closedPageParam, loadActiveOrders, loadClosedOrders } from "../lib/shop-queue";
 import { dailyStats, istDayBounds, loadDailyStats, type StatsRow } from "../lib/shop-stats";
 
 describe("new-order alerts", () => {
@@ -142,5 +144,129 @@ describe("dashboard UI", () => {
     const html = renderToStaticMarkup(createElement(DailyStatsCards, { stats: null }));
     assert.ok(html.includes('role="alert"') && html.includes("Retry"));
     assert.ok(!html.includes("₹"));
+  });
+});
+
+describe("AutoRefresh polling", () => {
+  const fakeDoc = (state: DocumentVisibilityState) => {
+    const target = new EventTarget();
+    const doc = Object.assign(target, { visibilityState: state });
+    const set = (next: DocumentVisibilityState) => {
+      doc.visibilityState = next;
+      target.dispatchEvent(new Event("visibilitychange"));
+    };
+    return { doc, set };
+  };
+
+  it("ticks while visible, stops while hidden, ticks once on return, then resumes", () => {
+    mock.timers.enable({ apis: ["setInterval"] });
+    try {
+      const { doc, set } = fakeDoc("visible");
+      let ticks = 0;
+      const stop = pollWhileVisible(() => ticks++, 15_000, doc);
+      mock.timers.tick(30_000);
+      assert.equal(ticks, 2);
+      set("hidden");
+      mock.timers.tick(60_000);
+      assert.equal(ticks, 2, "no polling in a hidden tab");
+      set("visible");
+      assert.equal(ticks, 3, "one refresh on return");
+      set("visible"); // a repeated event is not a second return
+      assert.equal(ticks, 3);
+      mock.timers.tick(14_999);
+      assert.equal(ticks, 3, "the interval restarts from the return, no double tick");
+      mock.timers.tick(1);
+      assert.equal(ticks, 4);
+      stop();
+      mock.timers.tick(60_000);
+      set("hidden");
+      set("visible");
+      assert.equal(ticks, 4, "cleanup removes both the interval and the listener");
+    } finally {
+      mock.timers.reset();
+    }
+  });
+
+  it("a tab opened in the background waits until it is shown", () => {
+    mock.timers.enable({ apis: ["setInterval"] });
+    try {
+      const { doc, set } = fakeDoc("hidden");
+      let ticks = 0;
+      const stop = pollWhileVisible(() => ticks++, 15_000, doc);
+      mock.timers.tick(60_000);
+      assert.equal(ticks, 0);
+      set("visible");
+      assert.equal(ticks, 1);
+      stop();
+    } finally {
+      mock.timers.reset();
+    }
+  });
+});
+
+describe("shop queue queries", () => {
+  /** Records every builder call; each awaited query returns the next page. */
+  function pagedClient(pages: { data: unknown[] | null; error: unknown }[]) {
+    const calls: unknown[][] = [];
+    const builder: Record<string, unknown> = {};
+    for (const m of ["select", "eq", "in", "order", "range"]) {
+      builder[m] = (...a: unknown[]) => (calls.push([m, ...a]), builder);
+    }
+    builder.returns = () => Promise.resolve(pages.shift() ?? { data: [], error: null });
+    const client = { from: (t: string) => (calls.push(["from", t]), builder) } as unknown as SupabaseClient;
+    return { client, calls };
+  }
+  const rows = (n: number, from = 0) => Array.from({ length: n }, (_, i) => ({ id: `o${from + i}`, order_files: [] }));
+
+  it("fetches every active order, past the old 200 cap, oldest first, for this shop only", async () => {
+    const { client, calls } = pagedClient([
+      { data: rows(ACTIVE_PAGE), error: null },
+      { data: rows(ACTIVE_PAGE, ACTIVE_PAGE), error: null },
+      { data: rows(7, 2 * ACTIVE_PAGE), error: null },
+    ]);
+    const orders = await loadActiveOrders(client, SHOP);
+    assert.equal(orders.length, 2 * ACTIVE_PAGE + 7);
+    assert.equal(new Set(orders.map((o) => o.id)).size, orders.length);
+    assert.deepEqual(calls.filter((c) => c[0] === "range"), [["range", 0, 199], ["range", 200, 399], ["range", 400, 599]]);
+    assert.ok(calls.every((c) => c[0] !== "eq" || (c[1] === "shop_id" && c[2] === SHOP)));
+    assert.deepEqual(calls.find((c) => c[0] === "in"), ["in", "status", ["PENDING", "ACCEPTED", "PRINTING", "READY"]]);
+    assert.deepEqual(calls.find((c) => c[0] === "order"), ["order", "created_at", { ascending: true }]);
+    assert.match(String(calls.find((c) => c[0] === "select")?.[1]), /order_files\(/);
+  });
+  it("a failed page throws instead of showing a partial queue", async () => {
+    const { client } = pagedClient([{ data: rows(ACTIVE_PAGE), error: null }, { data: null, error: { message: "timeout" } }]);
+    await assert.rejects(loadActiveOrders(client, SHOP));
+  });
+  it("closed orders come a page at a time, without files, and say whether an older page exists", async () => {
+    const { client, calls } = pagedClient([{ data: rows(CLOSED_PAGE + 1), error: null }]);
+    const page = await loadClosedOrders(client, SHOP, 2);
+    assert.equal(page.orders.length, CLOSED_PAGE);
+    assert.equal(page.hasOlder, true);
+    assert.deepEqual(calls.find((c) => c[0] === "range"), ["range", 60, 90]);
+    assert.deepEqual(calls.find((c) => c[0] === "in"), ["in", "status", ["COMPLETED", "CANCELLED", "REJECTED"]]);
+    assert.doesNotMatch(String(calls.find((c) => c[0] === "select")?.[1]), /order_files|student_note/);
+
+    const last = await loadClosedOrders(pagedClient([{ data: rows(3), error: null }]).client, SHOP, 0);
+    assert.equal(last.hasOlder, false);
+    const failed = await loadClosedOrders(pagedClient([{ data: null, error: { message: "x" } }]).client, SHOP, 0);
+    assert.ok(failed.error && failed.orders.length === 0);
+  });
+  it("?closed= only accepts a sane page number", () => {
+    for (const [v, n] of [[undefined, 0], ["2", 2], ["-1", 0], ["1.5", 0], ["abc", 0], ["99999", 0], [["3", "4"], 3]] as const) {
+      assert.equal(closedPageParam(v as string | string[] | undefined), n, String(v));
+    }
+  });
+  it("closed list pages link newer/older and open expanded past the first page", () => {
+    const order = { id: "c1", order_number: "A-009", status: "COMPLETED" as const, status_reason: null,
+      payment_status: "PAID", payment_method: "ONLINE", total_paise: 100, created_at: "2026-10-21T05:00:00Z" };
+    const render = (props: { page?: number; hasOlder?: boolean }) => renderToStaticMarkup(
+      createElement(AppRouterContext.Provider, { value: {} as never }, createElement(RecentlyClosed, { orders: [order], ...props })));
+    const first = render({ hasOlder: true });
+    assert.match(first, /Recently closed \(1\+\)/);
+    assert.ok(first.includes('href="/shop?closed=1#closed"') && !first.includes(">Newer<"));
+    assert.doesNotMatch(first, /<details[^>]* open/);
+    const second = render({ page: 1 });
+    assert.match(second, /<details[^>]* open/);
+    assert.ok(second.includes('href="/shop#closed"') && !second.includes(">Older<"));
   });
 });
