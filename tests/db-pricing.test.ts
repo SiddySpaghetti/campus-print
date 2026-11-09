@@ -90,7 +90,7 @@ const estimatePaise = (shopId: string, o: Opts) => {
   const price = calculatePrice({
     shop: flowShops[shopId],
     options: { colour: o.colour ?? "bw", paper: o.paper ?? "a4", sides: o.sides ?? "single", copies: o.copies ?? 1 },
-    pageCount: o.pages.reduce<number>((n, p) => n + Number(p), 0),
+    pageCounts: [o.pages.reduce<number>((n, p) => n + Number(p), 0)],
   });
   return price && Math.round(price.total * 100);
 };
@@ -167,7 +167,7 @@ describe("unchanged: K2 A3 and colour, other shops, historical orders", () => {
     assert.equal(pricing.rows.length, 1);
     const changed = await db.query(`
       select o.id from public.orders o join snap.orders s on s.id = o.id
-       where (to_jsonb(o) - 'pricing_unit') is distinct from to_jsonb(s)`);
+       where (to_jsonb(o) - array['pricing_unit', 'accept_first', 'print_requested_at', 'paid_after_cancel']) is distinct from to_jsonb(s)`);
     assert.deepEqual(changed.rows, []);
     const units = await db.query<{ pricing_unit: string }>("select pricing_unit from public.orders where id in ($1, $2)", [HIST_K2, HIST_HARSH]);
     assert.deepEqual(units.rows.map((r) => r.pricing_unit), ["sheet", "sheet"]);

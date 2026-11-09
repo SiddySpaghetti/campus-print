@@ -18,11 +18,15 @@ const shop = { ratesPaise: { bw_a4: 150, colour_a4: 1000 } } as FlowShop;
 
 describe("price estimate", () => {
   it("uses the shop's per-sheet rate and the database's sheet maths", () => {
-    const p = calculatePrice({ shop, options: { ...defaultPrintOptions, sides: "double", copies: 2 }, pageCount: 5 });
+    const p = calculatePrice({ shop, options: { ...defaultPrintOptions, sides: "double", copies: 2 }, pageCounts: [5] });
     assert.deepEqual(p, { ratePerSheet: 1.5, sheetsPerCopy: 3, sheets: 6, total: 9 });
   });
   it("is null for an option the shop doesn't offer", () => {
-    assert.equal(calculatePrice({ shop, options: { ...defaultPrintOptions, paper: "a3" }, pageCount: 1 }), null);
+    assert.equal(calculatePrice({ shop, options: { ...defaultPrintOptions, paper: "a3" }, pageCounts: [1] }), null);
+  });
+  it("double-sided rounds per document, as the database charges: two 3-page documents are 4 sheets, not 3", () => {
+    const p = calculatePrice({ shop, options: { ...defaultPrintOptions, sides: "double" }, pageCounts: [3, 3] });
+    assert.deepEqual(p, { ratePerSheet: 1.5, sheetsPerCopy: 4, sheets: 4, total: 6 });
   });
 });
 
@@ -39,7 +43,15 @@ describe("step access", () => {
 });
 
 describe("tracking headline", () => {
-  it("an unpaid online order waits for payment, not for the shop (which can't see it yet)", () => {
+  it("accept-then-pay: waits for the shop, then for payment, then for the printer", () => {
+    const render = (props: Parameters<typeof OrderTracker>[0]) => renderToStaticMarkup(createElement(OrderTracker, props));
+    assert.ok(render({ status: "PENDING", online: true, acceptFirst: true }).includes("Waiting for the shop"));
+    const accepted = render({ status: "ACCEPTED", online: true, acceptFirst: true, awaitingPayment: true });
+    assert.ok(accepted.includes("Waiting for payment") && accepted.includes("Shop accepted"));
+    assert.ok(render({ status: "ACCEPTED", online: true, acceptFirst: true }).includes("Paid, waiting to print"));
+    assert.ok(render({ status: "ACCEPTED" }).includes("Accepted"), "pay at counter is unchanged");
+  });
+  it("a pay-first online order waits for payment, not for the shop (which can't see it yet)", () => {
     const render = (props: Parameters<typeof OrderTracker>[0]) => renderToStaticMarkup(createElement(OrderTracker, props));
     const unpaid = render({ status: "PENDING", online: true, awaitingPayment: true });
     assert.ok(unpaid.includes("Waiting for payment"));

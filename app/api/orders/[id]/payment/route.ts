@@ -1,3 +1,4 @@
+import { canStudentPay } from "@/lib/orders";
 import { requireRole } from "@/lib/server/auth";
 import { errorResponse, handle, logServerError, mapDbError, SAFE } from "@/lib/server/errors";
 import { rateLimit } from "@/lib/server/rate-limit";
@@ -16,8 +17,9 @@ import { createAdminClient } from "@/utils/supabase/admin";
  * even for a hand-crafted request.
  *
  * The amount is NEVER taken from the request: it is `orders.total_paise`, read
- * from the database after confirming the order is the caller's own, PENDING and
- * unpaid. The browser cannot influence amount, currency or order.
+ * from the database after confirming the order is the caller's own, unpaid and
+ * (for accept-then-pay orders) accepted by the shop. The browser cannot influence
+ * amount, currency or order.
  *
  * PAID is never set here. Only process_payment_event does, called by the
  * signature-verified webhook or by /payment/verify after its own checks.
@@ -38,13 +40,12 @@ export function POST(_request: Request, ctx: RouteContext<"/api/orders/[id]/paym
     // Read through RLS as the user: only their own order can come back.
     const { data: order, error } = await supabase
       .from("orders")
-      .select("id, shop_id, status, payment_method, payment_status, total_paise, payment_order_id")
+      .select("id, shop_id, status, payment_method, payment_status, accept_first, total_paise, payment_order_id")
       .eq("id", orderId)
       .maybeSingle();
     if (error || !order) return errorResponse(SAFE.payFailed);
-    if (order.payment_method !== "ONLINE" || order.status !== "PENDING" || !["PENDING", "FAILED"].includes(order.payment_status)) {
-      return errorResponse(SAFE.payFailed);
-    }
+    // Mirrors attach_payment_order, which stays the authority.
+    if (!canStudentPay(order)) return errorResponse(SAFE.payFailed);
     const admin = createAdminClient();
     const account = razorpayAccount(order.shop_id);
     if (!account || !(await shopAllowsOnlinePayment(admin, order.shop_id))) return errorResponse(SAFE.forbidden);

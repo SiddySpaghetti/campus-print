@@ -39,10 +39,11 @@ export const metadata = { title: "Notifications" };
  * to their own rows.
  */
 export default async function NotificationsPage() {
-  const { supabase } = await requireStudentPage("/notifications");
+  const { supabase, user } = await requireStudentPage("/notifications");
   const { data, error } = await supabase
     .from("notifications")
     .select("id, order_id, type, title, body, read_at, created_at")
+    .eq("user_id", user.id)
     .order("created_at", { ascending: false })
     .limit(50)
     .returns<NotificationRow[]>();

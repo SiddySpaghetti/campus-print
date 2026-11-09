@@ -18,6 +18,7 @@ export function POST() {
     const { error } = await supabase
       .from("notifications")
       .update({ read_at: new Date().toISOString() })
+      .eq("user_id", user.id)
       .is("read_at", null);
     if (error) {
       logServerError("api/notifications/read", error);

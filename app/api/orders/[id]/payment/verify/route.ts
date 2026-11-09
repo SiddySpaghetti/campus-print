@@ -77,6 +77,7 @@ export function POST(request: Request, ctx: RouteContext<"/api/orders/[id]/payme
       status?: unknown;
       amount?: unknown;
       currency?: unknown;
+      created_at?: unknown;
     };
     if (payment.id !== paymentId || payment.order_id !== order.payment_order_id) {
       logServerError("api/orders/payment/verify", new Error("payment does not belong to this order"));
@@ -102,6 +103,7 @@ export function POST(request: Request, ctx: RouteContext<"/api/orders/[id]/payme
         payment_id: paymentId,
         amount: payment.amount,
         currency: payment.currency,
+        ...(Number.isInteger(payment.created_at) ? { occurred_at: new Date((payment.created_at as number) * 1000).toISOString() } : {}),
       },
     });
     if (processError) {

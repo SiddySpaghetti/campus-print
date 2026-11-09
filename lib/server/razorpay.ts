@@ -125,6 +125,7 @@ export function parsePaymentEvent(body: unknown): ParsedPaymentEvent | null {
   if (typeof body !== "object" || body === null) return null;
   const b = body as {
     event?: unknown;
+    created_at?: unknown;
     payload?: Record<string, { entity?: Record<string, unknown> } | undefined>;
   };
   if (typeof b.event !== "string" || !HANDLED_EVENTS.has(b.event)) {
@@ -137,6 +138,10 @@ export function parsePaymentEvent(body: unknown): ParsedPaymentEvent | null {
   const ref = b.payload?.refund?.entity;
   const str = (v: unknown) => (typeof v === "string" && v.length <= 100 ? v : null);
   const int = (v: unknown) => (Number.isInteger(v) ? (v as number) : null);
+  // When Razorpay says it happened, for the audit trail. Whether a payment counts as
+  // late is decided under our row lock, because a webhook can be delivered much later.
+  const seconds = int(b.created_at);
+  const occurred = seconds && seconds > 0 ? { occurred_at: new Date(seconds * 1000).toISOString() } : {};
 
   const paymentOrderId = str(pay?.order_id) ?? str(ord?.id);
   // A refund event's amount is THIS refund's, never the payment's (a partial
@@ -153,7 +158,7 @@ export function parsePaymentEvent(body: unknown): ParsedPaymentEvent | null {
       paymentId,
       amountPaise,
       currency,
-      payload: { event: b.event, order_id: paymentOrderId, payment_id: paymentId, refund_id: refundId, amount: amountPaise, currency },
+      payload: { event: b.event, order_id: paymentOrderId, payment_id: paymentId, refund_id: refundId, amount: amountPaise, currency, ...occurred },
     };
   }
   const paymentId = str(pay?.id);
@@ -165,6 +170,6 @@ export function parsePaymentEvent(body: unknown): ParsedPaymentEvent | null {
     paymentId,
     amountPaise,
     currency,
-    payload: { event: b.event, order_id: paymentOrderId, payment_id: paymentId, amount: amountPaise, currency },
+    payload: { event: b.event, order_id: paymentOrderId, payment_id: paymentId, amount: amountPaise, currency, ...occurred },
   };
 }

@@ -36,26 +36,33 @@ const headline: Record<OrderStatus, string> = {
 };
 
 /**
- * Shows the order's real status as stored in the database. Paid online orders
- * skip Accept (the shop's download starts printing), so `online` drops that
- * step — unless an older online order really is ACCEPTED. An unpaid online
- * order is invisible to the shop (RLS), so it waits for payment, not the shop.
+ * Shows the order's real status as stored in the database.
+ * `acceptFirst`: the shop accepts, then the student pays, then it can be printed.
+ * Otherwise an online order is an older pay-first one, which skips Accept (unless
+ * it really is ACCEPTED). `awaitingPayment`: the student's move, not the shop's.
  */
 export function OrderTracker({
   status,
   online = false,
+  acceptFirst = false,
   awaitingPayment = false,
 }: {
   status: OrderStatus;
   online?: boolean;
+  acceptFirst?: boolean;
   awaitingPayment?: boolean;
 }) {
   const reduced = useReducedMotion();
-  const title = awaitingPayment && status === "PENDING" ? "Waiting for payment" : headline[status];
+  const paidAndAccepted = acceptFirst && status === "ACCEPTED" && !awaitingPayment;
+  const title = awaitingPayment && (status === "PENDING" || status === "ACCEPTED")
+    ? "Waiting for payment"
+    : paidAndAccepted
+      ? "Paid, waiting to print"
+      : headline[status];
   const ended = status === "CANCELLED" || status === "REJECTED";
   const done = status === "READY" || status === "COMPLETED";
   const steps =
-    online && status !== "ACCEPTED" ? trackingSteps.filter((step) => step.id !== "ACCEPTED") : trackingSteps;
+    online && !acceptFirst && status !== "ACCEPTED" ? trackingSteps.filter((step) => step.id !== "ACCEPTED") : trackingSteps;
   const activeIndex = steps.findIndex((step) => step.id === status);
 
   return (

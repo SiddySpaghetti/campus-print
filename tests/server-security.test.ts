@@ -231,6 +231,16 @@ describe("webhook signature", () => {
     assert.equal(verifyWebhookSignature(body, sign(body), ""), false);
   });
 
+  it("keeps Razorpay's own event time for the audit trail, and ignores a bad one", () => {
+    const entity = { id: "pay_1", order_id: "order_1", amount: 500, currency: "INR" };
+    const timed = parsePaymentEvent({ event: "payment.captured", created_at: 1793606000, payload: { payment: { entity } } });
+    assert.equal(timed?.payload.occurred_at, new Date(1793606000 * 1000).toISOString());
+    for (const created_at of ["1793606000", -1, 0, 1.5, null]) {
+      const e = parsePaymentEvent({ event: "payment.captured", created_at, payload: { payment: { entity } } });
+      assert.equal(e?.payload.occurred_at, undefined, String(created_at));
+    }
+  });
+
   it("extracts only the fields it needs (no PII in the stored payload)", () => {
     const e = parsePaymentEvent({
       event: "payment.captured",

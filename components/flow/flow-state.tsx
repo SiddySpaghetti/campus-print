@@ -38,12 +38,13 @@ export const flowSteps: { id: FlowStepId; label: string; href: string }[] = [
   { id: "track", label: "Track", href: "/start-printing/track" },
 ];
 
-const STORAGE_KEY = "campusprint.flow.v2";
+const STORAGE_KEY = "campusprint.flow.v3";
 
 type FlowSnapshot = {
   /** Display copy of the chosen shop; the server re-reads the real one. */
   shop: FlowShop | null;
-  file: FlowFile | null;
+  /** In the order the student wants them printed. */
+  files: FlowFile[];
   options: PrintOptions;
   /** Set once POST /api/orders succeeds. */
   orderId: string | null;
@@ -53,7 +54,7 @@ type FlowSnapshot = {
 
 const emptyFlow: FlowSnapshot = {
   shop: null,
-  file: null,
+  files: [],
   options: defaultPrintOptions,
   orderId: null,
   ready: false,
@@ -140,8 +141,22 @@ export function selectShop(shop: FlowShop) {
   write({ shop });
 }
 
-export function setFile(file: FlowFile | null) {
-  write({ file });
+export function addFile(file: FlowFile) {
+  write({ files: [...snapshot.files, file] });
+}
+
+/** Forgets the file in this order. The upload stays in private Storage, unattached. */
+export function removeFile(path: string) {
+  write({ files: snapshot.files.filter((f) => f.path !== path) });
+}
+
+export function moveFile(path: string, by: -1 | 1) {
+  const files = [...snapshot.files];
+  const from = files.findIndex((f) => f.path === path);
+  const to = from + by;
+  if (from < 0 || to < 0 || to >= files.length) return;
+  [files[from], files[to]] = [files[to], files[from]];
+  write({ files });
 }
 
 export function setOptions(patch: Partial<PrintOptions>) {
@@ -161,16 +176,19 @@ export function setOrderId(orderId: string) {
 export function toProgress(flow: FlowSnapshot): FlowProgress {
   return {
     hasShop: Boolean(flow.shop),
-    hasFile: Boolean(flow.file),
+    hasFile: flow.files.length > 0,
     placed: Boolean(flow.orderId),
   };
 }
 
 export type FlowValue = FlowSnapshot & {
+  /** Pages across all documents. */
   pageCount: number;
   price: PriceBreakdown | null;
   selectShop: typeof selectShop;
-  setFile: typeof setFile;
+  addFile: typeof addFile;
+  removeFile: typeof removeFile;
+  moveFile: typeof moveFile;
   setOptions: typeof setOptions;
   setCopies: typeof setCopies;
   setOrderId: typeof setOrderId;
@@ -188,16 +206,16 @@ export function useFlow(): FlowValue {
     hydrate();
   }, []);
 
-  const { shop } = flow;
+  const { shop, files } = flow;
 
-  const pageCount = flow.file?.pageCount ?? 1;
+  const pageCount = files.reduce((sum, f) => sum + f.pageCount, 0);
 
   const price = useMemo(
     () =>
       shop
-        ? calculatePrice({ shop, options: flow.options, pageCount })
+        ? calculatePrice({ shop, options: flow.options, pageCounts: files.length ? files.map((f) => f.pageCount) : [1] })
         : null,
-    [shop, flow.options, pageCount],
+    [shop, flow.options, files],
   );
 
   const canAccess = useCallback(
@@ -208,12 +226,12 @@ export function useFlow(): FlowValue {
   const completedSteps = useMemo<Record<FlowStepId, boolean>>(
     () => ({
       shop: Boolean(shop),
-      upload: Boolean(flow.file),
-      options: Boolean(shop && flow.file),
+      upload: files.length > 0,
+      options: Boolean(shop) && files.length > 0,
       review: Boolean(flow.orderId),
       track: false,
     }),
-    [shop, flow.file, flow.orderId],
+    [shop, files, flow.orderId],
   );
 
   return {
@@ -221,7 +239,9 @@ export function useFlow(): FlowValue {
     pageCount,
     price,
     selectShop,
-    setFile,
+    addFile,
+    removeFile,
+    moveFile,
     setOptions,
     setCopies,
     setOrderId,

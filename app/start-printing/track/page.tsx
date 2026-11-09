@@ -5,7 +5,7 @@ import { OrderTracker, type OrderStatus } from "@/components/flow/order-tracker"
 import { Container } from "@/components/shared/section";
 import { SectionHeading } from "@/components/shared/section-heading";
 import { Button } from "@/components/ui/button";
-import { canStudentCancel, FINAL_STATUSES, formatOrderDate, isPaidNotCompleted, orderLabel, paymentLabel } from "@/lib/orders";
+import { canStudentCancel, canStudentPay, FINAL_STATUSES, formatOrderDate, isPaidNotCompleted, orderLabel, paymentLabel } from "@/lib/orders";
 import { formatPageCount, formatSheetCount } from "@/lib/page-count";
 import {
   colourLabels,
@@ -28,6 +28,8 @@ type OrderRow = {
   status_reason: string | null;
   payment_status: string;
   payment_method: string;
+  accept_first: boolean;
+  paid_after_cancel: boolean;
   colour_mode: ColourMode;
   paper_size: PaperSize;
   sides: SideMode;
@@ -36,11 +38,11 @@ type OrderRow = {
   sheets: number;
   total_paise: number;
   created_at: string;
-  order_files: { original_name: string }[];
+  order_files: { id: string; original_name: string; page_count: number; sort_order: number }[];
 };
 
 const ORDER_COLUMNS =
-  "id, order_number, shop_id, status, status_reason, payment_status, payment_method, colour_mode, paper_size, sides, copies, total_pages, sheets, total_paise, created_at, order_files(original_name)";
+  "id, order_number, shop_id, status, status_reason, payment_status, payment_method, accept_first, paid_after_cancel, colour_mode, paper_size, sides, copies, total_pages, sheets, total_paise, created_at, order_files(id, original_name, page_count, sort_order)";
 
 export const metadata = { title: "Track order" };
 
@@ -86,6 +88,8 @@ export default async function TrackPage({ searchParams }: PageProps<"/start-prin
   const final = FINAL_STATUSES.includes(order.status);
   const unpaid = ["PENDING", "FAILED"].includes(order.payment_status);
   const atCounter = order.payment_method === "PAY_AT_COUNTER";
+  const acceptFirst = !atCounter && order.accept_first;
+  const documents = [...order.order_files].sort((a, b) => a.sort_order - b.sort_order);
 
   return (
     <Container className="pb-16 pt-8 md:pb-24 md:pt-12">
@@ -107,8 +111,8 @@ export default async function TrackPage({ searchParams }: PageProps<"/start-prin
       <div className="mt-10 grid gap-6 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] lg:gap-8">
         <div className="flex h-fit flex-col gap-5 rounded-card border border-line bg-card p-5 md:p-6">
           <dl className="flex flex-col gap-2 text-[13px]">
-            {order.order_files.map((f) => (
-              <Detail key={f.original_name} label="Document" value={f.original_name} />
+            {documents.map((f) => (
+              <Detail key={f.id} label="Document" value={`${f.original_name} · ${formatPageCount(f.page_count)}`} />
             ))}
             <Detail label="Pages" value={formatPageCount(order.total_pages)} />
             <Detail label="Colour" value={colourLabels[order.colour_mode]} />
@@ -127,8 +131,13 @@ export default async function TrackPage({ searchParams }: PageProps<"/start-prin
             </span>
           </div>
 
+          {acceptFirst && order.status === "PENDING" ? (
+            <p className="text-[13px] text-muted-foreground">
+              Nothing to pay yet. You can pay here once {shop?.name ?? "the shop"} accepts your order.
+            </p>
+          ) : null}
           {/* Only the configured Razorpay shop; the payment route re-checks its online_payment flag. */}
-          {unpaid && !atCounter && order.status === "PENDING" && onlinePaymentAllowed(order.shop_id, true) ? (
+          {canStudentPay(order) && onlinePaymentAllowed(order.shop_id, true) ? (
             <PayNowButton orderId={order.id} label={label} />
           ) : null}
           {canStudentCancel(order) ? (
@@ -137,12 +146,18 @@ export default async function TrackPage({ searchParams }: PageProps<"/start-prin
         </div>
 
         <div className="flex flex-col gap-5">
-          <OrderTracker status={order.status} online={!atCounter} awaitingPayment={!atCounter && unpaid} />
+          <OrderTracker
+            status={order.status}
+            online={!atCounter}
+            acceptFirst={acceptFirst}
+            awaitingPayment={canStudentPay(order)}
+          />
           {order.status_reason ? (
             <p className="text-[13px] text-muted-foreground">Reason: {order.status_reason}</p>
           ) : null}
           {isPaidNotCompleted(order) ? (
             <p role="status" className="rounded-card border border-line bg-paper-deep p-4 text-[13px] text-ink">
+              {order.paid_after_cancel ? "Your payment arrived after this order was closed, so nothing was printed. " : ""}
               This order wasn&apos;t completed. Your payment of {formatRupees(order.total_paise / 100)} is recorded and
               has not been refunded yet. To request a refund, contact {shop?.name ?? "the shop"}
               {shop?.address ? ` (${shop.address})` : ""}. A refund made through Razorpay shows here as

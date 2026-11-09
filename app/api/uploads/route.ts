@@ -20,7 +20,8 @@ export function POST(request: Request) {
   return handle("api/uploads", async () => {
     const { user } = await requireRole("student");
 
-    const limited = await rateLimit(`upload:${user.id}`, 30, 3600);
+    // Ten documents per order, so a few orders (with retries) an hour.
+    const limited = await rateLimit(`upload:${user.id}`, 60, 3600);
     if (limited) return limited;
 
     const input = parseUploadRequest(await readJson(request));

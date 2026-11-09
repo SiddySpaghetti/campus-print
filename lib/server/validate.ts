@@ -22,6 +22,7 @@ export type AllowedMime = keyof typeof MIME_TO_EXT;
 export const MAX_FILE_BYTES = 25 * 1024 * 1024;
 export const MAX_COPIES = 20;
 export const MAX_FILES_PER_ORDER = 10;
+export const MAX_ORDER_BYTES = 100 * 1024 * 1024;
 export const MAX_NOTE_LENGTH = 500;
 
 export class ValidationError extends Error {
@@ -78,15 +79,26 @@ export type CreateOrderInput = {
   copies: number;
   note: string | null;
   files: { path: string; name: string }[];
+  /** The price the student was shown; only ever compared, never charged. */
+  quotedTotalPaise: number | null;
 };
 
 /**
  * Note what is deliberately ABSENT: price, total, rate, page count, size and
  * MIME type. The browser cannot supply them; the server derives every one.
+ * quotedTotalPaise is consent, not a price: a mismatch refuses the order.
  */
 export function parseCreateOrder(body: unknown, userId: string): CreateOrderInput {
   const b = asObject(body);
-  exactKeys(b, ["shopId", "colour", "paper", "sides", "copies", "note", "files"]);
+  exactKeys(b, ["shopId", "colour", "paper", "sides", "copies", "note", "files", "quotedTotalPaise"]);
+
+  let quotedTotalPaise: number | null = null;
+  if (b.quotedTotalPaise !== undefined && b.quotedTotalPaise !== null) {
+    if (!Number.isInteger(b.quotedTotalPaise) || (b.quotedTotalPaise as number) < 0) {
+      throw new ValidationError("invalid quote");
+    }
+    quotedTotalPaise = b.quotedTotalPaise as number;
+  }
 
   if (!isUuid(b.shopId)) throw new ValidationError("invalid shop");
   const copies = b.copies;
@@ -122,6 +134,7 @@ export function parseCreateOrder(body: unknown, userId: string): CreateOrderInpu
     copies: copies as number,
     note,
     files,
+    quotedTotalPaise,
   };
 }
 
@@ -146,8 +159,8 @@ export function parseUploadRequest(body: unknown): UploadRequest {
  * Shop status moves: target -> the statuses it may be reached from. Mirrors
  * orders_guard + orders_lifecycle (which stay the real authority); the route
  * also uses it as a compare-and-set so a double click can't fire twice.
- * PRINTING is absent on purpose: downloading the file starts printing
- * (POST /api/shop/files/[id]), never a bare button.
+ * PRINTING is absent on purpose: only the shopkeeper's confirmation after a print
+ * request starts printing (POST /api/shop/orders/[id]/printing).
  */
 export const SHOP_TRANSITIONS = {
   ACCEPTED: ["PENDING"],

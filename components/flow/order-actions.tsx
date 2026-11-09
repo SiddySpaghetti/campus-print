@@ -56,8 +56,9 @@ export function AutoRefresh() {
 }
 
 /**
- * Cancels the student's own PENDING order (cancel_order decides). A paid one
- * is not refunded automatically, so the student is told before confirming.
+ * Cancels the student's own order before printing starts (cancel_order decides).
+ * A paid one enters the manual refund workflow and is not refunded automatically,
+ * so the student is told before confirming.
  */
 export function CancelOrderButton({ orderId, paid = false }: { orderId: string; paid?: boolean }) {
   const router = useRouter();
@@ -180,10 +181,8 @@ export function PayNowButton({ orderId, label }: { orderId: string; label: strin
 }
 
 /**
- * Downloads one order file. The server signs the link and only then (for an
- * ACCEPTED order) moves it to PRINTING; a failure changes nothing and shows
- * here instead of navigating away. Stays disabled until the refreshed status
- * arrives, so a double click can't fire twice.
+ * Opens one original file of a paid or counter order. It changes nothing on the
+ * order; a failure shows here instead of navigating away.
  */
 export function DownloadFileButton({
   fileId,
@@ -233,17 +232,18 @@ type ShopTarget = "ACCEPTED" | "READY" | "COMPLETED" | "REJECTED" | "CANCELLED";
 type ShopAction = { target: ShopTarget; label: string; danger?: boolean };
 
 /**
- * The shop's next moves (the server re-validates every one). No button moves an
- * order to PRINTING: downloading the document does. Paid online orders skip
- * Accept. Rejecting or cancelling a paid one refunds nothing: the payment stays
- * recorded (REFUND_PENDING, "Paid · not completed") for the shop and student to
- * settle; only a refund Razorpay confirms marks it Refunded.
+ * The shop's next moves (the server re-validates every one). No button here moves
+ * an order to PRINTING: only "Printing started" after a print request does. Online
+ * orders placed before accept-then-pay skip Accept. Rejecting or cancelling a paid
+ * one refunds nothing: the payment stays recorded (REFUND_PENDING, "Paid · not
+ * completed") for the shop and student to settle; only a refund Razorpay confirms
+ * marks it Refunded.
  */
-export function shopActions(status: string, online: boolean): ShopAction[] {
+export function shopActions(status: string, online: boolean, acceptFirst = false): ShopAction[] {
   const cancel: ShopAction = { target: "CANCELLED", label: "Cancel", danger: true };
   switch (status) {
     case "PENDING":
-      return online
+      return online && !acceptFirst
         ? [{ target: "REJECTED", label: "Reject", danger: true }]
         : [{ target: "ACCEPTED", label: "Accept" }, { target: "REJECTED", label: "Reject", danger: true }];
     case "ACCEPTED":
@@ -257,34 +257,33 @@ export function shopActions(status: string, online: boolean): ShopAction[] {
   }
 }
 
-/** Status buttons for one order on the shop dashboard; `files` = its downloadable files. */
+/** Status buttons for one order on the shop dashboard. */
 export function ShopStatusActions({
   orderId,
   status,
   paymentMethod,
-  files,
+  paymentStatus,
+  acceptFirst,
 }: {
   orderId: string;
   status: string;
   paymentMethod: string;
-  files: { id: string; original_name: string }[];
+  paymentStatus: string;
+  acceptFirst: boolean;
 }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [refreshing, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const online = paymentMethod === "ONLINE";
-  const actions = shopActions(status, online);
-  // Mirrors printFrom in the download route.
-  const printable = status === "ACCEPTED" || (online && status === "PENDING");
+  const actions = shopActions(status, online, acceptFirst);
   if (actions.length === 0) return null;
 
   const move = async (target: ShopTarget, label: string) => {
     let reason: string | undefined;
     if (target === "REJECTED" || target === "CANCELLED") {
-      // Online orders the shop can see are paid (orders_select_shop).
-      const paidNote = online ? " The payment is NOT refunded automatically; the student will be asked to contact you." : "";
-      const input = window.prompt(`${label} this order?${paidNote} Tell the student why (required):`);
+      const paidNote = paymentStatus === "PAID" ? " The payment is NOT refunded automatically; the student will be asked to contact you." : "";
+      const input = window.prompt(`${label} this order?${paidNote} Tell the student why, for example printer not working or out of paper (required):`);
       if (input === null) return;
       reason = input.trim().slice(0, 200);
       if (!reason) return;
@@ -305,13 +304,6 @@ export function ShopStatusActions({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-start gap-2">
-        {printable
-          ? files.map((f) => (
-              <DownloadFileButton key={f.id} fileId={f.id}>
-                {files.length === 1 ? "Download document" : `Download ${f.original_name}`}
-              </DownloadFileButton>
-            ))
-          : null}
         {actions.map((a) => (
           <Button
             key={a.target}

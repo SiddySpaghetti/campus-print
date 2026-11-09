@@ -517,12 +517,12 @@ begin
   update public.orders set status = 'READY'    where id in (oF1, oF2);
   update public.orders set status = 'COMPLETED' where id in (oF1, oF2);
   update public.orders set files_purge_after = now() - interval '1 day' where id = oF1;
-  insert into public.order_files (order_id, storage_path, original_name, mime_type, size_bytes, page_count) values
-    (oF1, stu::text || '/' || gen_random_uuid() || '/f1a.pdf', 'f1a', 'application/pdf', 10, 1),
-    (oF1, stu::text || '/' || gen_random_uuid() || '/f1b.pdf', 'f1b', 'application/pdf', 10, 1),
-    (oF2, stu::text || '/' || gen_random_uuid() || '/f2.pdf',  'f2',  'application/pdf', 10, 1),
-    (oF3, stu::text || '/' || gen_random_uuid() || '/f3.pdf',  'f3',  'application/pdf', 10, 1),
-    (oF4, stu::text || '/' || gen_random_uuid() || '/f4.pdf',  'f4',  'application/pdf', 10, 1);
+  insert into public.order_files (order_id, sort_order, storage_path, original_name, mime_type, size_bytes, page_count) values
+    (oF1, 0, stu::text || '/' || gen_random_uuid() || '/f1a.pdf', 'f1a', 'application/pdf', 10, 1),
+    (oF1, 1, stu::text || '/' || gen_random_uuid() || '/f1b.pdf', 'f1b', 'application/pdf', 10, 1),
+    (oF2, 0, stu::text || '/' || gen_random_uuid() || '/f2.pdf',  'f2',  'application/pdf', 10, 1),
+    (oF3, 0, stu::text || '/' || gen_random_uuid() || '/f3.pdf',  'f3',  'application/pdf', 10, 1),
+    (oF4, 0, stu::text || '/' || gen_random_uuid() || '/f4.pdf',  'f4',  'application/pdf', 10, 1);
   select id into f1a from public.order_files where order_id = oF1 and original_name = 'f1a';
   select id into f1b from public.order_files where order_id = oF1 and original_name = 'f1b';
   select id into f2  from public.order_files where order_id = oF2;

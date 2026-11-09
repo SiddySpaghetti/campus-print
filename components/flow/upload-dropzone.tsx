@@ -2,9 +2,8 @@
 
 import { useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { FileText, UploadCloud, X } from "lucide-react";
+import { ArrowDown, ArrowUp, FileText, UploadCloud, X } from "lucide-react";
 
-import { DrawCheck } from "@/components/flow/draw-check";
 import { useFlow } from "@/components/flow/flow-state";
 import { Button } from "@/components/ui/button";
 import { postJson } from "@/lib/api-client";
@@ -14,12 +13,14 @@ import {
   ACCEPTED_FILE_TYPES,
   fileKindLabel,
   formatFileSize,
+  MAX_FILE_BYTES,
+  MAX_FILES_PER_ORDER,
+  MAX_ORDER_BYTES,
 } from "@/lib/pricing";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/utils/supabase/client";
 
 const EASE_OUT = [0.22, 1, 0.36, 1] as const;
-const MAX_BYTES = 25 * 1024 * 1024;
 
 /** Paper settling: a touch of overshoot, then still. */
 const SETTLE = {
@@ -30,72 +31,73 @@ const SETTLE = {
 } as const;
 
 /**
- * Local document picker: drag-and-drop plus a file input, following the
- * 21st.dev "File Dropzone" (#19201) pattern — drag state on the zone, type and
- * size validation, then a card for the chosen file.
+ * Document picker: drag-and-drop plus a file input, for one or several files.
+ * They upload one at a time, in the order chosen, and each lands as a sheet in
+ * the tray below, where the student can reorder or remove it. The printed order
+ * is the tray's order.
  *
- * The chosen document behaves like a sheet of paper: it comes in from above,
- * slightly rotated, and settles into the tray below the zone.
- *
- * The file is uploaded straight away: POST /api/uploads returns a server-chosen
- * path and a single-use signed upload URL token, and the bytes go directly to
- * the private Storage bucket. The server then inspects the stored bytes
+ * Each file goes up straight away: POST /api/uploads returns a server-chosen path
+ * and a single-use signed upload URL token, and the bytes go directly to the
+ * private Storage bucket. The server then inspects the stored bytes
  * (/api/uploads/inspect) and returns the real page count, or rejects the file.
+ * One bad file doesn't stop the others; it is named below instead.
  */
 export function UploadDropzone() {
-  const { file, setFile } = useFlow();
+  const { files, addFile, removeFile, moveFile } = useFlow();
   const reduced = useReducedMotion();
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [uploading, setUploading] = useState(false);
+  const [errors, setErrors] = useState<string[]>([]);
+  const [uploading, setUploading] = useState<string | null>(null);
 
-  const accept = async (incoming: File | undefined) => {
-    if (!incoming || uploading) return;
+  const totalBytes = files.reduce((sum, f) => sum + f.sizeBytes, 0);
+  const totalPages = files.reduce((sum, f) => sum + f.pageCount, 0);
 
-    if (!ACCEPTED_FILE_TYPES.includes(incoming.type as (typeof ACCEPTED_FILE_TYPES)[number])) {
-      setError(`That file type isn't supported. Choose a ${ACCEPTED_FILE_HINT} file.`);
-      return;
-    }
-    if (incoming.size > MAX_BYTES) {
-      setError("That file is larger than 25 MB.");
-      return;
-    }
-
-    setError(null);
-    setUploading(true);
-    try {
-      const { path, token } = await postJson<{ path: string; token: string }>("/api/uploads", {
-        mime: incoming.type,
-        extension: incoming.name.split(".").pop()?.toLowerCase() ?? "",
-        sizeBytes: incoming.size,
-        name: incoming.name,
-      });
-      const { error: uploadError } = await createClient()
-        .storage.from("print-files")
-        .uploadToSignedUrl(path, token, incoming, { contentType: incoming.type });
-      if (uploadError) throw new Error("Upload failed. Please try again.");
-      // The server reads the stored bytes: real page count, or a rejection.
-      const { pageCount } = await postJson<{ pageCount: number }>("/api/uploads/inspect", { path });
-
-      setFile({
-        name: incoming.name,
-        type: incoming.type,
-        sizeBytes: incoming.size,
-        pageCount,
-        path,
-      });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Upload failed. Please try again.");
-      if (inputRef.current) inputRef.current.value = "";
-    } finally {
-      setUploading(false);
-    }
+  const uploadOne = async (incoming: File) => {
+    const { path, token } = await postJson<{ path: string; token: string }>("/api/uploads", {
+      mime: incoming.type,
+      extension: incoming.name.split(".").pop()?.toLowerCase() ?? "",
+      sizeBytes: incoming.size,
+      name: incoming.name,
+    });
+    const { error: uploadError } = await createClient()
+      .storage.from("print-files")
+      .uploadToSignedUrl(path, token, incoming, { contentType: incoming.type });
+    if (uploadError) throw new Error("Upload failed. Please try again.");
+    // The server reads the stored bytes: real page count, or a rejection.
+    const { pageCount } = await postJson<{ pageCount: number }>("/api/uploads/inspect", { path });
+    addFile({ name: incoming.name, type: incoming.type, sizeBytes: incoming.size, pageCount, path });
   };
 
-  const clear = () => {
-    setFile(null);
-    setError(null);
+  const accept = async (incoming: readonly File[]) => {
+    if (incoming.length === 0 || uploading) return;
+    const problems: string[] = [];
+    let count = files.length;
+    let bytes = totalBytes;
+    for (const file of incoming) {
+      if (!ACCEPTED_FILE_TYPES.includes(file.type as (typeof ACCEPTED_FILE_TYPES)[number])) {
+        problems.push(`${file.name}: that file type isn't supported. Choose a ${ACCEPTED_FILE_HINT} file.`);
+      } else if (file.size > MAX_FILE_BYTES) {
+        problems.push(`${file.name}: larger than 25 MB.`);
+      } else if (count >= MAX_FILES_PER_ORDER) {
+        problems.push(`${file.name}: an order can have up to ${MAX_FILES_PER_ORDER} documents.`);
+      } else if (bytes + file.size > MAX_ORDER_BYTES) {
+        problems.push(`${file.name}: an order can be up to 100 MB in total.`);
+      } else {
+        count += 1;
+        bytes += file.size;
+        setUploading(file.name);
+        try {
+          await uploadOne(file);
+        } catch (e) {
+          count -= 1;
+          bytes -= file.size;
+          problems.push(`${file.name}: ${e instanceof Error ? e.message : "upload failed. Please try again."}`);
+        }
+      }
+      setErrors([...problems]);
+    }
+    setUploading(null);
     if (inputRef.current) inputRef.current.value = "";
   };
 
@@ -111,7 +113,7 @@ export function UploadDropzone() {
         onDrop={(event) => {
           event.preventDefault();
           setDragging(false);
-          void accept(event.dataTransfer.files?.[0]);
+          void accept(Array.from(event.dataTransfer.files ?? []));
         }}
         animate={{ scale: dragging ? 1.012 : 1 }}
         transition={{ duration: 0.22, ease: EASE_OUT }}
@@ -145,10 +147,10 @@ export function UploadDropzone() {
         </div>
 
         <p className="font-display text-lg font-semibold tracking-[-0.02em] text-ink">
-          {dragging ? "Drop it here" : "Drag your document here"}
+          {dragging ? "Drop them here" : "Drag your documents here"}
         </p>
         <p className="mt-1.5 text-[13px] text-muted-foreground">
-          {ACCEPTED_FILE_HINT} · up to 25 MB
+          {ACCEPTED_FILE_HINT} · up to 25 MB each · up to {MAX_FILES_PER_ORDER} documents
         </p>
 
         <Button
@@ -156,103 +158,117 @@ export function UploadDropzone() {
           variant="outline"
           size="lg"
           className="mt-6"
-          disabled={uploading}
+          disabled={Boolean(uploading)}
           onClick={() => inputRef.current?.click()}
         >
-          {uploading ? "Uploading…" : "Choose file"}
+          {uploading ? "Uploading…" : "Choose files"}
         </Button>
+        {uploading ? (
+          <p aria-live="polite" className="mt-2 max-w-full truncate text-[13px] text-muted-foreground">
+            Uploading {uploading}
+          </p>
+        ) : null}
 
         <input
           ref={inputRef}
           type="file"
+          multiple
           accept=".pdf,.png,.jpg,.jpeg"
           className="sr-only"
-          aria-label="Choose a document to print"
-          onChange={(event) => void accept(event.target.files?.[0])}
+          aria-label="Choose documents to print"
+          onChange={(event) => void accept(Array.from(event.target.files ?? []))}
         />
       </motion.div>
 
-      {error ? (
-        <p role="alert" className="text-[13px] font-medium text-destructive">
-          {error}
-        </p>
+      {errors.length > 0 ? (
+        <ul role="alert" className="flex flex-col gap-1 text-[13px] font-medium text-destructive">
+          {errors.map((message) => (
+            <li key={message} className="[overflow-wrap:anywhere]">
+              {message}
+            </li>
+          ))}
+        </ul>
       ) : null}
 
-      {/* Tray: the sheet lands here. Overflow is clipped so it enters from
-          above the tray rather than floating over the dropzone. */}
-      <AnimatePresence initial={false}>
-        {file ? (
-          <motion.div
-            key="tray"
-            className="overflow-hidden"
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.3, ease: EASE_OUT }}
-          >
-            <motion.div
-              className="flex items-center gap-4 rounded-card border border-line bg-card p-4"
-              initial={
-                reduced
-                  ? { opacity: 0 }
-                  : { y: -56, rotate: -2.5, opacity: 0, scale: 0.98 }
-              }
-              animate={{ y: 0, rotate: 0, opacity: 1, scale: 1 }}
-              transition={reduced ? { duration: 0.2 } : SETTLE}
-            >
-              <span
-                aria-hidden="true"
-                className="flex size-11 shrink-0 items-center justify-center rounded-xl border border-line bg-paper-deep text-ink"
-              >
-                <FileText className="size-5" strokeWidth={1.75} />
-              </span>
-
-              <div className="min-w-0 flex-1">
-                {/* Metadata arrives once the sheet has settled. */}
-                <motion.div
-                  initial={{ opacity: 0, y: 4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: reduced ? 0 : 0.22, duration: 0.26, ease: EASE_OUT }}
+      {/* Tray: each sheet lands here, in print order. */}
+      {files.length > 0 ? (
+        <section aria-label="Documents to print, in print order">
+          <ol className="flex flex-col gap-2">
+            <AnimatePresence initial={false}>
+              {files.map((file, index) => (
+                <motion.li
+                  key={file.path}
+                  layout={!reduced}
+                  className="flex items-center gap-3 rounded-card border border-line bg-card p-3 md:gap-4 md:p-4"
+                  initial={reduced ? { opacity: 0 } : { y: -24, rotate: -1.5, opacity: 0 }}
+                  animate={{ y: 0, rotate: 0, opacity: 1 }}
+                  exit={{ opacity: 0, transition: { duration: 0.12 } }}
+                  transition={reduced ? { duration: 0.2 } : SETTLE}
                 >
-                  <p className="truncate font-medium text-ink">{file.name}</p>
-                  <p className="mt-0.5 text-[13px] text-muted-foreground">
-                    {fileKindLabel(file)} · {formatFileSize(file.sizeBytes)} ·{" "}
-                    {formatPageCount(file.pageCount)}
-                  </p>
-                </motion.div>
+                  <span
+                    aria-hidden="true"
+                    className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-line bg-paper-deep text-ink"
+                  >
+                    <FileText className="size-5" strokeWidth={1.75} />
+                  </span>
 
-                <motion.p
-                  className="mt-2 inline-flex items-center gap-1.5 text-[13px] font-medium text-signal-ready"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ delay: reduced ? 0 : 0.36, duration: 0.24 }}
-                >
-                  <DrawCheck
-                    className="size-4"
-                    delay={reduced ? 0 : 0.42}
-                    strokeWidth={2.5}
-                  />
-                  Document ready
-                </motion.p>
-              </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium text-ink">
+                      {index + 1}. {file.name}
+                    </p>
+                    <p className="mt-0.5 text-[13px] text-muted-foreground">
+                      {fileKindLabel(file)} · {formatFileSize(file.sizeBytes)} · {formatPageCount(file.pageCount)}
+                    </p>
+                  </div>
 
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                onClick={clear}
-                aria-label={`Remove ${file.name}`}
-              >
-                <X aria-hidden="true" className="size-4" />
-              </Button>
-            </motion.div>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
+                  <div className="flex shrink-0 items-center gap-0.5">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      disabled={index === 0}
+                      onClick={() => moveFile(file.path, -1)}
+                      aria-label={`Move ${file.name} up`}
+                    >
+                      <ArrowUp aria-hidden="true" className="size-4" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      disabled={index === files.length - 1}
+                      onClick={() => moveFile(file.path, 1)}
+                      aria-label={`Move ${file.name} down`}
+                    >
+                      <ArrowDown aria-hidden="true" className="size-4" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => {
+                        removeFile(file.path);
+                        setErrors([]);
+                      }}
+                      aria-label={`Remove ${file.name}`}
+                    >
+                      <X aria-hidden="true" className="size-4" />
+                    </Button>
+                  </div>
+                </motion.li>
+              ))}
+            </AnimatePresence>
+          </ol>
+          <p className="mt-2 text-[13px] font-medium text-ink">
+            {files.length} {files.length === 1 ? "document" : "documents"} · {formatPageCount(totalPages)} ·{" "}
+            {formatFileSize(totalBytes)}
+          </p>
+        </section>
+      ) : null}
 
       <p className="text-[13px] text-muted-foreground">
-        Files are stored privately: only you, and the shop once it has your order, can
-        open them.
+        Files are stored privately. Only you can open them until your order is paid or set to pay at the counter; then the
+        shop handling it can too.
       </p>
     </div>
   );

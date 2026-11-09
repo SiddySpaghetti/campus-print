@@ -15,7 +15,7 @@ export function POST(request: Request) {
   return handle("api/uploads/inspect", async () => {
     const { user } = await requireRole("student");
 
-    const limited = await rateLimit(`upload_inspect:${user.id}`, 60, 3600);
+    const limited = await rateLimit(`upload_inspect:${user.id}`, 120, 3600);
     if (limited) return limited;
 
     const body = (await readJson(request)) as { path?: unknown } | null;

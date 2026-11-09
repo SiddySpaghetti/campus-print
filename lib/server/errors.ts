@@ -31,6 +31,10 @@ export const SAFE = {
   notPrintable: { status: 409, code: "not_printable", message: "This order is closed, so its files can't be downloaded." },
   unpaid: { status: 409, code: "unpaid", message: "This order hasn't been paid yet, so it can't be printed." },
   downloadFailed: { status: 502, code: "download_failed", message: "The document couldn't be prepared. Try again." },
+  filesMissing: { status: 409, code: "files_missing", message: "A file of this order is no longer available, so it can't be printed." },
+  printNotConfirmed: { status: 409, code: "print_not_confirmed", message: "This order changed and can't be marked as printing. It may have been cancelled: stop and refresh." },
+  quoteFailed: { status: 500, code: "quote_failed", message: "The price couldn't be confirmed. Please try again." },
+  priceChanged: { status: 409, code: "price_changed", message: "The price of this order has changed. Please check it and try again." },
   payFailed:{ status: 502, code: "payment_unavailable", message: "Payment couldn't be started. Please try again." },
   notConfigured: { status: 503, code: "unavailable", message: "This feature isn't available right now." },
   internal: { status: 500, code: "internal", message: "Something went wrong." },
@@ -54,7 +58,7 @@ export function mapDbError(error: DbError, fallback: SafeError): SafeError {
       return SAFE.forbidden;
     case "P0002":
     case "P0001":
-      return fallback === SAFE.createFailed ? SAFE.shopUnavailable : fallback;
+      return fallback === SAFE.createFailed || fallback === SAFE.quoteFailed ? SAFE.shopUnavailable : fallback;
     case "23505":
       return SAFE.badFile;
     default:

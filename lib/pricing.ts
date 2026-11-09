@@ -96,26 +96,32 @@ export function pageTierRate(tiers: readonly PageTier[] | undefined, billablePag
   return best ? best.pricePaise : null;
 }
 
-/** Null when the shop doesn't offer this colour/paper combination. */
+/**
+ * Null when the shop doesn't offer this colour/paper combination. `pageCounts` has
+ * one entry per document: each starts on a new sheet, so double-sided rounds per
+ * document, as private.price_order does.
+ */
 export function calculatePrice({
   shop,
   options,
-  pageCount,
+  pageCounts,
 }: {
   shop: FlowShop;
   options: PrintOptions;
-  pageCount: number;
+  pageCounts: readonly number[];
 }): PriceBreakdown | null {
   const key = `${options.colour}_${options.paper}` as const;
   const ratePaise = shop.ratesPaise[key];
   if (ratePaise === undefined) return null;
   const copies = Math.max(MIN_COPIES, options.copies);
-  const sheetsPerCopy =
-    options.sides === "double" ? Math.ceil(pageCount / 2) : pageCount;
+  const sheetsPerCopy = pageCounts.reduce(
+    (sum, count) => sum + (options.sides === "double" ? Math.ceil(count / 2) : count),
+    0,
+  );
   const sheets = sheetsPerCopy * copies;
 
   // Integer paise first, so there's no float drift.
-  const pages = pageCount * copies;
+  const pages = pageCounts.reduce((sum, count) => sum + count, 0) * copies;
   const tierPaise = pageTierRate(shop.pageTiersPaise?.[key], pages);
   if (tierPaise !== null) {
     return { perPage: { rate: tierPaise / 100, pages }, sheetsPerCopy, sheets, total: (tierPaise * pages) / 100 };
@@ -154,3 +160,8 @@ export const ACCEPTED_FILE_TYPES = [
 ] as const;
 
 export const ACCEPTED_FILE_HINT = "PDF, PNG or JPG";
+
+/** Mirrors lib/server/validate.ts and create_order_verified, which enforce them. */
+export const MAX_FILE_BYTES = 25 * 1024 * 1024;
+export const MAX_ORDER_BYTES = 100 * 1024 * 1024;
+export const MAX_FILES_PER_ORDER = 10;

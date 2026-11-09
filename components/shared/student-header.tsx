@@ -22,6 +22,7 @@ export async function StudentHeader({ children }: { children?: React.ReactNode }
   const { count } = await supabase
     .from("notifications")
     .select("id", { count: "exact", head: true })
+    .eq("user_id", user.id)
     .is("read_at", null);
   const unread = count ?? 0;
 

@@ -1,9 +1,9 @@
 import { requireRole } from "@/lib/server/auth";
 import { errorResponse, handle, logServerError, mapDbError, readJson, SAFE } from "@/lib/server/errors";
-import { FileRejected, inspectFile } from "@/lib/server/file-inspect";
+import { inspectOrderFiles, quoteOrder, type OrderQuote } from "@/lib/server/order-files";
 import { rateLimit } from "@/lib/server/rate-limit";
 import { shopAllowsOnlinePayment } from "@/lib/server/razorpay";
-import { MAX_FILE_BYTES, parseCreateOrder } from "@/lib/server/validate";
+import { parseCreateOrder } from "@/lib/server/validate";
 import { createAdminClient } from "@/utils/supabase/admin";
 
 /**
@@ -36,20 +36,16 @@ export function POST(request: Request) {
     // configured Razorpay account and online_payment on. Everyone else: counter.
     const online = await shopAllowsOnlinePayment(admin, input.shopId);
 
-    const files = [];
-    for (const f of input.files) {
-      const { data: blob, error } = await admin.storage.from("print-files").download(f.path);
-      if (error || !blob || blob.size > MAX_FILE_BYTES) throw new FileRejected("download");
-      const bytes = new Uint8Array(await blob.arrayBuffer());
-      const ext = f.path.slice(f.path.lastIndexOf(".") + 1);
-      const info = await inspectFile(bytes, ext);
-      files.push({
-        storage_path: f.path,
-        original_name: f.name,
-        mime_type: info.mime,
-        size_bytes: info.sizeBytes,
-        page_count: info.pageCount,
-      });
+    const files = await inspectOrderFiles(admin, input.files);
+
+    // The student agreed to a specific price. If it moved since, ask again.
+    if (input.quotedTotalPaise !== null) {
+      const { data: quote, error: quoteError } = await quoteOrder(admin, input, files);
+      if (quoteError || !quote) {
+        logServerError("api/orders:quote", quoteError);
+        return errorResponse(mapDbError(quoteError ?? {}, SAFE.quoteFailed));
+      }
+      if ((quote as OrderQuote).totalPaise !== input.quotedTotalPaise) return errorResponse(SAFE.priceChanged);
     }
 
     const { data, error } = await admin.rpc("create_order_verified", {

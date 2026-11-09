@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:security": "npx --yes tsx --test --experimental-test-module-mocks tests/server-security.test.ts tests/webhook-route.test.ts tests/flow.test.ts tests/shop-dashboard.test.ts tests/shop-printing.test.ts tests/db-printing.test.ts tests/db-security-checks.test.ts tests/db-pricing.test.ts"
+    "test:security": "npx --yes tsx --test --experimental-test-module-mocks tests/server-security.test.ts tests/webhook-route.test.ts tests/flow.test.ts tests/shop-dashboard.test.ts tests/shop-printing.test.ts tests/db-printing.test.ts tests/db-security-checks.test.ts tests/db-pricing.test.ts tests/db-workflow.test.ts tests/print-pdf.test.ts tests/new-order-alerts.test.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",

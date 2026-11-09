@@ -71,17 +71,19 @@ select e.received_at, o.order_number, s.name as shop, e.event_type, e.result,
 ```
 <!-- refund-events-query:end -->
 
-### Late-payment query (paid after the order was cancelled)
+### Late-payment query (paid after the order was cancelled or rejected)
 
 <!-- late-payment-query:start -->
 ```sql
 select o.order_number, s.name as shop, o.status, o.status_reason,
-       o.cancelled_at, o.paid_at, o.total_paise / 100.0 as amount_rupees, o.payment_id
+       coalesce(o.cancelled_at, o.rejected_at) as closed_at, o.paid_at,
+       (select e.payload ->> 'occurred_at' from public.payment_events e
+         where e.order_id = o.id and e.result = 'paid_after_cancel' limit 1) as razorpay_time,
+       o.total_paise / 100.0 as amount_rupees, o.payment_id
   from public.orders o
   join public.shops s on s.id = o.shop_id
  where o.payment_status = 'REFUND_PENDING'
-   and o.cancelled_at is not null
-   and o.paid_at > o.cancelled_at
+   and o.paid_after_cancel
  order by o.paid_at;
 ```
 <!-- late-payment-query:end -->
@@ -186,9 +188,12 @@ payment state.
   refunded. To request a refund, contact the shop."*
 - Cancelling a paid order: *"Cancel this paid order? It is not refunded
   automatically. To request a refund, contact the shop."*
-- Paid after cancellation (student): *"Order X was paid after it was cancelled —
-  Your payment of ₹X is recorded and has not been refunded. To request a
-  refund, contact the shop."* The shop sees it flagged in *Paid, not completed*.
+- Paid after cancellation or rejection (student): *"Order X was paid after it was
+  cancelled (or rejected) — Nothing was printed. Your payment of ₹X is recorded and
+  has not been refunded. To request a refund, contact the shop."* The shop sees it
+  flagged in *Paid, not completed*. The order stays closed. `razorpay_time` can be
+  earlier than `closed_at` when Razorpay delivered the event late; the order still
+  counts as paid late, because it was already closed when the payment was confirmed.
 - Partial refund confirmed by Razorpay: *"Razorpay confirmed a refund of ₹A.
   ₹B of your payment has not been refunded; to request it, contact the shop."*
 - *"Refund issued … Your money is on its way back to you."* — sent only when
@@ -199,9 +204,11 @@ payment state.
 Razorpay's website checks expect a published Cancellation & Refunds policy. A
 short, honest draft:
 
-> **Cancellation.** You can cancel an order from your order page until the
-> shop accepts it or starts printing it. A shop may reject or cancel an order
-> it cannot fulfil, and will tell you why.
+> **Cancellation.** You can cancel an online order from your order page until
+> printing starts (a pay-at-counter order, until the shop accepts it). If you
+> have already paid, the payment stays recorded and you request the refund as
+> below. A shop may reject or cancel an order it cannot fulfil, and will tell
+> you why.
 >
 > **Refunds.** If you paid online and your order was not completed, contact
 > the shop to request a refund. Refunds are issued by the shop through

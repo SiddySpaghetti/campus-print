@@ -30,7 +30,8 @@ export type ShopOrder = {
   total_paise: number;
   student_note: string | null;
   created_at: string;
-  order_files: { id: string; original_name: string; page_count: number; size_bytes: number; file_deleted_at: string | null }[];
+  accept_first: boolean;
+  order_files: { id: string; original_name: string; page_count: number; size_bytes: number; sort_order: number; file_deleted_at: string | null }[];
 };
 
 export const ACTIVE: OrderStatus[] = ["PENDING", "ACCEPTED", "PRINTING", "READY"];
@@ -41,7 +42,7 @@ export const ACTIVE_PAGE = 200;
 export const CLOSED_PAGE = 30;
 
 const ACTIVE_COLUMNS =
-  "id, order_number, status, status_reason, payment_status, payment_method, colour_mode, paper_size, sides, copies, total_pages, sheets, total_paise, student_note, created_at, order_files(id, original_name, page_count, size_bytes, file_deleted_at)";
+  "id, order_number, status, status_reason, payment_status, payment_method, accept_first, colour_mode, paper_size, sides, copies, total_pages, sheets, total_paise, student_note, created_at, order_files(id, original_name, page_count, size_bytes, sort_order, file_deleted_at)";
 const CLOSED_COLUMNS = "id, order_number, status, status_reason, payment_status, payment_method, total_paise, created_at";
 
 /**
@@ -64,6 +65,8 @@ export async function loadActiveOrders(supabase: SupabaseClient, shopId: string 
       .range(orders.length, orders.length + ACTIVE_PAGE - 1)
       .returns<ShopOrder[]>();
     if (error) throw error;
+    // The student's document order: an embedded list has no order of its own.
+    for (const o of data ?? []) o.order_files.sort((a, b) => a.sort_order - b.sort_order);
     orders.push(...(data ?? []));
     if ((data?.length ?? 0) < ACTIVE_PAGE) return orders;
   }

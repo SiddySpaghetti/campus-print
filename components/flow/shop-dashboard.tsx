@@ -17,9 +17,8 @@ export type DashboardOrder = {
   payment_method: string;
   total_paise: number;
   created_at: string;
-  /** Only read by PaidNotCompleted, to flag money captured after a cancellation. */
-  paid_at?: string | null;
-  cancelled_at?: string | null;
+  /** Only read by PaidNotCompleted: money captured after the order was closed. */
+  paid_after_cancel?: boolean;
 };
 
 export type ShopAlert = { id: string; type: string; title: string; body: string | null; created_at: string };
@@ -155,9 +154,9 @@ export function PaidNotCompleted({ orders }: { orders: DashboardOrder[] }) {
         {orders.map((o) => (
           <li key={o.id} className="rounded-card border border-line bg-card p-4">
             <OrderHeader order={o} />
-            {o.paid_at && o.cancelled_at && o.paid_at > o.cancelled_at ? (
+            {o.paid_after_cancel ? (
               <p className="mt-1 text-[13px] font-medium text-ink">
-                Paid after it was cancelled: nothing was printed. The student has been told to contact you.
+                Paid after it was {o.status === "REJECTED" ? "rejected" : "cancelled"}: nothing was printed. The student has been told to contact you.
               </p>
             ) : null}
             {o.status_reason ? <p className="mt-1 text-[13px] text-muted-foreground">Reason: {o.status_reason}</p> : null}

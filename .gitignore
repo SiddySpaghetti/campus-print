@@ -46,3 +46,6 @@ next-env.d.ts
 
 # Supabase CLI local state
 supabase/.temp/
+
+# /brag video output
+brag-output*/

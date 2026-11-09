@@ -48,6 +48,7 @@ export function OrderSummary({
   edits,
   assemble = false,
   onAssembled,
+  quote,
   className,
 }: {
   /** Optional per-block edit links, used on the review screen. */
@@ -55,11 +56,20 @@ export function OrderSummary({
   /** Stagger the blocks in rather than showing them at once. */
   assemble?: boolean;
   onAssembled?: () => void;
+  /** The server's price (review screen). Without it the total is an estimate. */
+  quote?: { unit: "sheet" | "page"; ratePaise: number; totalPages: number; sheets: number; totalPaise: number } | null;
   className?: string;
 }) {
-  const { shop, file, options, pageCount, price } = useFlow();
+  const { shop, files, options, pageCount, price } = useFlow();
 
   if (!shop) return null;
+
+  const rate = quote ? quote.ratePaise / 100 : price?.perPage ? price.perPage.rate : price?.ratePerSheet;
+  const perPage = quote ? quote.unit === "page" : Boolean(price?.perPage);
+  const units = quote
+    ? perPage ? quote.totalPages * options.copies : quote.sheets
+    : price?.perPage ? price.perPage.pages : price?.sheets;
+  const total = quote ? quote.totalPaise / 100 : price?.total;
 
   return (
     <motion.div
@@ -101,23 +111,34 @@ export function OrderSummary({
         </div>
       </Block>
 
-      <Block label="Document" assemble={assemble} editHref={edits?.document} editLabel="Change document">
-        {file ? (
-          <div className="flex items-start gap-3">
-            <span
-              aria-hidden="true"
-              className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-line bg-paper-deep"
-            >
-              <FileText className="size-4" strokeWidth={1.75} />
-            </span>
-            <div className="min-w-0">
-              <p className="truncate text-[15px] font-medium text-ink">{file.name}</p>
-              <p className="mt-0.5 text-[13px] text-muted-foreground">
-                {fileKindLabel(file)} · {formatFileSize(file.sizeBytes)} ·{" "}
-                {formatPageCount(pageCount)}
-              </p>
-            </div>
-          </div>
+      <Block
+        label={files.length > 1 ? `Documents · ${formatPageCount(pageCount)}` : "Document"}
+        assemble={assemble}
+        editHref={edits?.document}
+        editLabel="Change documents"
+      >
+        {files.length > 0 ? (
+          <ol className="flex flex-col gap-2">
+            {files.map((file, index) => (
+              <li key={file.path} className="flex items-start gap-3">
+                <span
+                  aria-hidden="true"
+                  className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-line bg-paper-deep"
+                >
+                  <FileText className="size-4" strokeWidth={1.75} />
+                </span>
+                <div className="min-w-0">
+                  <p className="truncate text-[15px] font-medium text-ink">
+                    {files.length > 1 ? `${index + 1}. ` : ""}
+                    {file.name}
+                  </p>
+                  <p className="mt-0.5 text-[13px] text-muted-foreground">
+                    {fileKindLabel(file)} · {formatFileSize(file.sizeBytes)} · {formatPageCount(file.pageCount)}
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ol>
         ) : (
           <p className="text-[13px] text-muted-foreground">No document chosen yet.</p>
         )}
@@ -147,13 +168,12 @@ export function OrderSummary({
       >
         <div>
           <p className="font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
-            Total
+            {quote ? "Final price" : "Estimated total"}
           </p>
-          {price ? (
+          {total !== undefined && rate !== undefined && units !== undefined ? (
           <p className="mt-0.5 text-[12px] text-muted-foreground">
             {/* Per-page tiers (e.g. K2's A4 B&W) bill pages x copies; otherwise sheets. */}
-            {price.perPage ? formatPageCount(price.perPage.pages) : formatSheetCount(price.sheets)} ·{" "}
-            {formatRate(price.perPage ? price.perPage.rate : price.ratePerSheet)} each
+            {perPage ? formatPageCount(units) : formatSheetCount(units)} · {formatRate(rate)} each
           </p>
           ) : (
             <p className="mt-0.5 text-[12px] text-muted-foreground">
@@ -161,9 +181,9 @@ export function OrderSummary({
             </p>
           )}
         </div>
-        {price ? (
+        {total !== undefined ? (
           <AnimatedTotal
-            amount={price.total}
+            amount={total}
             className="font-mono text-[28px] font-semibold leading-none tracking-[-0.03em] text-ink"
           />
         ) : null}
